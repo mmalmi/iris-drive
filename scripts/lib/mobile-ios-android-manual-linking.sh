@@ -30,11 +30,11 @@ wait_for_app_key_link_request() {
   while ((SECONDS < deadline)); do
     rm -f "$config"
     if [[ "$platform" == "ios" ]]; then
-      copy_ios_config "$config" || true
-    else
-      copy_android_config "$config" || true
-    fi
-    if [[ -s "$config" ]] && request="$(app_key_link_request_from_config "$config")"; then
+      if request="$(read_ios_link_profile request)"; then
+        printf '%s\n' "$request"
+        return 0
+      fi
+    elif copy_android_config "$config" && [[ -s "$config" ]] && request="$(app_key_link_request_from_config "$config")"; then
       printf '%s\n' "$request"
       return 0
     fi
@@ -82,9 +82,9 @@ run_ios_owner_android_joiner_manual() {
     || fail "iOS shipped manual approval field did not become ready"
   wait_for_ios_marker "IRIS_IOS_LIFECYCLE_RESUMED=1" 2 \
     || fail "iOS manual owner state did not survive background/restart coverage"
-  wait_for_ios_marker "IRIS_IOS_MANUAL_REQUEST_ENTERED=1" 15 \
+  wait_for_ios_marker "IRIS_IOS_MANUAL_REQUEST_ENTERED=1" 45 \
     || fail "iOS did not type Android's complete production approval request"
-  wait_for_ios_marker "IRIS_IOS_MANUAL_CONFIRMATION_READY=1" 5 \
+  wait_for_ios_marker "IRIS_IOS_MANUAL_CONFIRMATION_READY=1" 15 \
     || fail "iOS did not expose explicit confirmation for the manual request"
 
   IOS_TO_ANDROID_MANUAL_STARTED_MS="$(monotonic_milliseconds)"
@@ -127,7 +127,7 @@ run_android_owner_ios_joiner_manual() {
   wait_for_ios_marker "IRIS_IOS_LIFECYCLE_RESUMED=1" 2 \
     || fail "iOS manual request did not survive background and resume"
 
-  local request ios_config="$TMP/ios-manual-joiner-config.toml"
+  local request
   request="$(wait_for_app_key_link_request ios 15)" \
     || fail "could not read iOS's production-generated approval request"
   open_android_manual_approval
@@ -150,8 +150,6 @@ run_android_owner_ios_joiner_manual() {
   wait_for_empty_receipts android "$WAIT_SECS" \
     || fail "Android manual owner retained its durable approval receipt after iOS applied it"
   finish_ios_test testIosJoinerWaitsForAndroidManualApproval
-  copy_ios_config "$ios_config" || fail "could not read iOS manual joiner config"
-  assert_authorized_config "$ios_config" || fail "iOS did not persist manual-link authorization"
   assert_ios_provider_content "$ANDROID_MANUAL_OWNER_FILE" "$ANDROID_MANUAL_OWNER_CONTENT" \
     || fail "iOS provider content did not match Android's manual-link write"
 }
@@ -173,6 +171,7 @@ write_mobile_linking_summary() {
     >"$summary" <<'PY'
 import hashlib
 import json
+import os
 import sys
 
 (
@@ -208,6 +207,7 @@ print(json.dumps({
     "ok": True,
     "skipped": False,
     "physical_execution": True,
+    "transport": os.environ.get("IRIS_DRIVE_MOBILE_LINK_TRANSPORT", "configured"),
     "camera_transfer": "rendered QR images delivered to isolated scanners on physical devices",
     "manual_entry_transfer": "complete production request typed through shipped UI",
     "qr_directions": ["ios-owner-to-android-joiner", "android-owner-to-ios-joiner"],

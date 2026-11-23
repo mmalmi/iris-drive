@@ -8,6 +8,7 @@ source "$ROOT/scripts/lib/ios-xcuitest-accessibility-session.sh"
 source "$ROOT/scripts/lib/mobile-physical-ios-xctest.sh"
 # shellcheck source=scripts/lib/mobile-qr-frames.sh
 source "$ROOT/scripts/lib/mobile-qr-frames.sh"
+source "$ROOT/scripts/lib/mobile-link-usb.sh"
 MODE="${IRIS_DRIVE_MOBILE_PHYSICAL_LINKING:-auto}"
 WAIT_SECS="${IRIS_DRIVE_MOBILE_LINK_WAIT_SECS:-15}"
 CAMERA_WAIT_SECS="${IRIS_DRIVE_MOBILE_CAMERA_WAIT_SECS:-30}"
@@ -31,7 +32,6 @@ IOS_SHARE_SOURCE_BUNDLE_ID="${IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID:-$IOS_BUNDLE
 IOS_RUNNER_BUNDLE_ID="${IRIS_DRIVE_IOS_UI_TEST_RUNNER_BUNDLE_ID:-$IOS_BUNDLE_ID.UITests.xctrunner}"
 IOS_DERIVED_DATA="${IRIS_DRIVE_IOS_PHYSICAL_LINK_DERIVED_DATA:-$ROOT/ios/.build/PhysicalLinkDerivedData}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
-IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios}"
 RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/debug"
 RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
@@ -127,6 +127,7 @@ cleanup() {
   fi
   if [[ "$ANDROID_FIXTURE_OWNED" == "1" && -n "$ADB" && -n "$ANDROID_SERIAL_SELECTED" ]]; then
     "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell am force-stop "$ANDROID_PACKAGE" >/dev/null 2>&1 || true
+    "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell rm -f "/data/local/tmp/iris-physical-link-$RUN_ID.xml" >/dev/null || true
     if [[ "${IRIS_DRIVE_MOBILE_LINK_KEEP_ANDROID_APP:-0}" != "1" ]]; then
       "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell pm clear "$ANDROID_PACKAGE" >/dev/null 2>&1 || true
     fi
@@ -380,6 +381,12 @@ PY
 
 assert_android_unlocked
 assert_ios_unlocked
+IOS_XCODE_DEVICE="$(xcrun devicectl list devices --quiet --json-output - | python3 -c '
+import json,sys
+devices = json.load(sys.stdin)["result"]["devices"]
+phone, = [device for device in devices if device["identifier"] == sys.argv[1]]
+print(phone["hardwareProperties"]["udid"])' "$IOS_DEVICE_SELECTED")"
+start_mobile_link_transport "$@"
 
 android_artifacts_valid() {
   python3 - "$ANDROID_APK" "$ANDROID_TEST_APK" <<'PY'
@@ -412,8 +419,11 @@ build_apps() {
   fi
   android_artifacts_valid || fail "Android physical-link APKs are missing, corrupt, or incomplete"
 
-  cargo build -p idrive
-  [[ -x "$IDRIVE" ]] || fail "idrive was not built for exact provider-content verification"
+  if [[ -n "${IRIS_DRIVE_IOS_PHYSICAL_LINK_XCTESTRUN:-}" ]]; then
+    XCTESTRUN="$IRIS_DRIVE_IOS_PHYSICAL_LINK_XCTESTRUN"
+    verify_xctestrun_products "$XCTESTRUN"
+    return
+  fi
   cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
   [[ -f "$RUST_STATIC_LIB" ]] || fail "iOS app-core static library was not built"
   xcodebuild \
@@ -421,7 +431,7 @@ build_apps() {
     -scheme "$IOS_SCHEME" \
     -configuration "$IOS_CONFIGURATION" \
     -derivedDataPath "$IOS_DERIVED_DATA" \
-    -destination "platform=iOS,id=$IOS_DEVICE_SELECTED" \
+    -destination "platform=iOS,id=$IOS_XCODE_DEVICE" \
     "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG IRIS_DRIVE_QR_FRAME_TEST" \
     LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
     OTHER_LDFLAGS="$RUST_STATIC_LIB" \
@@ -433,14 +443,12 @@ build_apps() {
 }
 
 assert_ios_provider_write_marker() {
-  local expected
-  expected="$(printf '%s' "$1" | sha256_text)"
-  wait_for_ios_marker "IRIS_IOS_PROVIDER_WRITE_SHA256=$expected" 10
+  wait_for_ios_marker "IRIS_IOS_PROVIDER_WRITE_SHA256=$(printf '%s' "$1" | sha256_text)" 10
 }
 
 verify_xctestrun_products() {
   local run_file="$1"
-  python3 - "$run_file" <<'PY'
+  python3 - "$run_file" "$IOS_BUNDLE_ID" "$IOS_APP_GROUP_ID" <<'PY'
 from pathlib import Path
 import plistlib
 import sys
@@ -486,6 +494,10 @@ products.extend(resolve(value) for value in dependencies)
 missing = [str(path) for path in products if not path.exists()]
 if missing:
     raise SystemExit("physical xctestrun product is missing: " + ", ".join(missing))
+with (resolve(required_string("UITargetAppPath")) / "Info.plist").open("rb") as stream:
+    app_info = plistlib.load(stream)
+if (app_info.get("CFBundleIdentifier"), app_info.get("IrisDriveAppGroupIdentifier")) != tuple(sys.argv[2:]):
+    raise SystemExit("Physical XCTest app identity or app group differs from the selected test profile")
 PY
 }
 
@@ -502,42 +514,7 @@ start_ios_test() {
   IOS_TEST_RUN_FILE="$run_file"
   IOS_SIGNAL_PREFIX="$test_name"
   cp "$XCTESTRUN" "$run_file"
-  python3 - "$run_file" \
-    "IRIS_XCUITEST_PHYSICAL_LINK_GATE=1" \
-    "IRIS_XCUITEST_ISOLATED_DEVICE=1" \
-    "IRIS_XCUITEST_RUN_ID=$RUN_ID" \
-    "IRIS_XCUITEST_FRAME_SHA256=${QR_FRAME_SHA256:-}" \
-    "IRIS_XCUITEST_SIGNAL_PREFIX=$IOS_SIGNAL_PREFIX" \
-    "IRIS_XCUITEST_DELIVERY_WAIT_SECS=$WAIT_SECS" \
-    "IRIS_XCUITEST_CAMERA_WAIT_SECS=$CAMERA_WAIT_SECS" \
-    "IRIS_XCUITEST_SHARE_SOURCE_BUNDLE_ID=$IOS_SHARE_SOURCE_BUNDLE_ID" \
-    "IRIS_XCUITEST_POST_LINK_FILE=$post_file" \
-    "IRIS_XCUITEST_POST_LINK_CONTENT_B64=$(printf '%s' "$post_content" | base64_url)" \
-    "IRIS_XCUITEST_PEER_FILE=$peer_file" \
-    "IRIS_XCUITEST_MANUAL_REQUEST_B64=$(printf '%s' "$manual_request" | base64_url)" <<'PY'
-import plistlib
-import sys
-
-path = sys.argv[1]
-updates = dict(value.split("=", 1) for value in sys.argv[2:])
-with open(path, "rb") as handle:
-    data = plistlib.load(handle)
-matched = 0
-for target in data.values():
-    if not isinstance(target, dict) or not target.get("IsUITestBundle"):
-        continue
-    matched += 1
-    for key in (
-        "EnvironmentVariables",
-        "TestingEnvironmentVariables",
-        "UITargetAppEnvironmentVariables",
-    ):
-        target.setdefault(key, {}).update(updates)
-if matched != 1:
-    raise SystemExit(f"expected one UI test target, found {matched}")
-with open(path, "wb") as handle:
-    plistlib.dump(data, handle)
-PY
+  configure_physical_xctestrun "$run_file" "$post_file" "$post_content" "$peer_file" "$manual_request"
   verify_xctestrun_products "$run_file"
 
   IOS_TEST_LOG="$RESULT_DIR/ios-$test_name.log"
@@ -545,7 +522,7 @@ PY
   rm -f "$IOS_MARKERS"
   xcodebuild \
     -xctestrun "$run_file" \
-    -destination "platform=iOS,id=$IOS_DEVICE_SELECTED" \
+    -destination "platform=iOS,id=$IOS_XCODE_DEVICE" \
     -only-testing:"IrisDriveIOSUITests/IrisDrivePhysicalLinkingUITests/$test_name" \
     -resultBundlePath "$IOS_TEST_RESULT_BUNDLE" \
     test-without-building >"$IOS_TEST_LOG" 2>&1 &
@@ -588,8 +565,9 @@ finish_ios_test() {
 }
 
 android_dump_ui() {
-  "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell uiautomator dump /sdcard/iris-physical-link.xml >/dev/null
-  "$ADB" -s "$ANDROID_SERIAL_SELECTED" exec-out cat /sdcard/iris-physical-link.xml >"$TMP/android-ui.xml"
+  local dump="/data/local/tmp/iris-physical-link-$RUN_ID.xml"
+  "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell uiautomator dump "$dump" >/dev/null || return 1
+  "$ADB" -s "$ANDROID_SERIAL_SELECTED" exec-out cat "$dump" >"$TMP/android-ui.xml"
 }
 
 android_ui_point() {
@@ -654,7 +632,9 @@ prepare_android_fresh() {
   ANDROID_FIXTURE_OWNED=1
   "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell am force-stop "$ANDROID_PACKAGE" >/dev/null 2>&1 || true
   "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell pm clear "$ANDROID_PACKAGE" >/dev/null
+  "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell pm grant "$ANDROID_PACKAGE" android.permission.CAMERA
   start_android_app
+  configure_android_link_transport
 }
 
 create_android_owner_through_ui() {
@@ -680,8 +660,11 @@ display_android_join_request_qr() {
 open_android_approval_camera() {
   open_android_manual_approval
   wait_and_tap_android_text "Scan QR" 10 || fail "Android shipped QR scanner action was unavailable"
-  wait_for_android_ui desc "QR scanner camera" 10 \
-    || fail "Android shipped QR camera did not become ready"
+  local deadline=$((SECONDS + 10))
+  while ((SECONDS < deadline)); do
+    if android_dump_ui && android_scanner_surface_ready; then return 0; fi
+  done
+  fail "Android did not display the live camera in its scanner"
 }
 
 restart_android_and_assert_authorized() {
@@ -728,16 +711,6 @@ copy_android_config() {
     cat files/config.toml >"$1" 2>/dev/null
 }
 
-copy_ios_config() {
-  local destination="$1"
-  xcrun devicectl device copy from \
-    --device "$IOS_DEVICE_SELECTED" \
-    --domain-type appGroupDataContainer \
-    --domain-identifier "$IOS_APP_GROUP_ID" \
-    --source "IrisDrive/config.toml" \
-    --destination "$destination" >/dev/null 2>&1
-}
-
 assert_pending_receipts_cleared() {
   python3 - "$1" <<'PY'
 import sys
@@ -768,11 +741,8 @@ wait_for_empty_receipts() {
   while (( SECONDS < deadline )); do
     rm -f "$config"
     if [[ "$platform" == "ios" ]]; then
-      copy_ios_config "$config" || true
-    else
-      copy_android_config "$config" || true
-    fi
-    if [[ -s "$config" ]] && assert_pending_receipts_cleared "$config"; then
+      read_ios_link_profile acknowledged && return 0
+    elif copy_android_config "$config" && [[ -s "$config" ]] && assert_pending_receipts_cleared "$config"; then
       return 0
     fi
     sleep 0.25
@@ -781,30 +751,11 @@ wait_for_empty_receipts() {
 }
 
 assert_ios_provider_content() {
-  local expected_name="$1"
-  local expected_content="$2"
-  local copied="$TMP/ios-provider-$expected_name"
-  local output="$TMP/ios-provider-read-$expected_name"
-  local expected="$TMP/ios-provider-expected-$expected_name"
-  rm -rf "$copied"
-  mkdir -p "$copied"
-  xcrun devicectl device copy from \
-    --device "$IOS_DEVICE_SELECTED" \
-    --domain-type appGroupDataContainer \
-    --domain-identifier "$IOS_APP_GROUP_ID" \
-    --source IrisDrive \
-    --destination "$copied" \
-    --quiet >/dev/null \
-    || return 1
-  local config
-  config="$(find "$copied" -name config.toml -type f -print -quit)"
-  [[ -n "$config" ]] || return 1
-  printf '%s' "$expected_content" >"$expected"
-  "$IDRIVE" --config-dir "$(dirname "$config")" provider read "$expected_name" "$output" \
-    >/dev/null 2>&1 \
-    || return 1
-  cmp -s "$expected" "$output" || return 1
-  echo "ios_provider_read_sha256=$(sha256_file "$output")" >&2
+  local name="$1" expected
+  expected="$(printf '%s' "$2" | sha256_text)"
+  python3 "$ROOT/scripts/lib/mobile-linked-file.py" "$XCTESTRUN" "$IOS_XCODE_DEVICE" \
+    "$IOS_BUNDLE_ID" "$IOS_APP_GROUP_ID" "$name" "$expected" "$RESULT_DIR/ios-provider-$name.log" || return 1
+  echo "ios_provider_read_sha256=$expected" >&2
 }
 
 run_android_provider_test() {
@@ -819,7 +770,10 @@ run_android_provider_test() {
     -e wait_millis "$((POST_LINK_WAIT_SECS * 1000))" \
     "$ANDROID_TEST_RUNNER" >"$log" 2>&1 \
     || { tail -n 120 "$log" >&2; return 1; }
-  grep -Eq 'OK \(1 test\)|IRIS_ANDROID_PROVIDER_(WRITE|READ)_SHA256=' "$log"
+  local operation=READ
+  [[ "$method" != writePostLinkFileThroughDocumentsProvider ]] || operation=WRITE
+  grep -Fq 'OK (1 test)' "$log" \
+    && grep -Fq "IRIS_ANDROID_PROVIDER_${operation}_SHA256=$(printf '%s' "$content" | sha256_text)" "$log"
 }
 
 write_android_provider_file() {
@@ -843,6 +797,8 @@ exchange_post_link_provider_files() {
     || fail "could not coordinate iOS provider write after observed authorization"
   wait_for_ios_marker "IRIS_IOS_HOST_AUTHORIZATION_OBSERVED=1" 10 \
     || fail "iOS did not observe the peer authorization checkpoint"
+  wait_for_ios_marker "IRIS_IOS_PROVIDER_SAVE_READY=1" 85 \
+    || fail "iOS did not open the share extension and verify its destination file"
   wait_for_ios_marker "IRIS_IOS_POST_LINK_FILE_READY=1" 25 \
     || fail "iOS did not complete its post-link provider write"
   assert_ios_provider_write_marker "$ios_content" \
@@ -933,7 +889,6 @@ run_android_owner_ios_joiner() {
   wait_for_android_ui text "Approve this device?" "$CAMERA_WAIT_SECS" \
     || fail "Android scanner did not recognize iOS's displayed QR"
   echo "IRIS_ANDROID_QR_IMAGE_CONFIRMED"
-  local ios_config="$TMP/ios-joiner-config.toml"
   ANDROID_TO_IOS_STARTED_MS="$(monotonic_milliseconds)"
   tap_android_ui text "Approve" || fail "Android approval confirmation could not be tapped"
   wait_for_ios_marker "IRIS_IOS_AUTHORIZED=1" "$WAIT_SECS" \
@@ -948,8 +903,6 @@ run_android_owner_ios_joiner() {
   wait_for_empty_receipts android "$WAIT_SECS" \
     || fail "Android owner retained its durable approval receipt after iOS applied it"
   finish_ios_test testIosJoinerDisplaysPhysicalQrAndBecomesAuthorized
-  copy_ios_config "$ios_config" || fail "could not read iOS joiner config"
-  assert_authorized_config "$ios_config" || fail "iOS did not persist authorized state"
   assert_ios_provider_content "$ANDROID_OWNER_FILE" "$ANDROID_OWNER_CONTENT" \
     || fail "iOS provider content did not match Android's post-link write"
 }
@@ -957,6 +910,7 @@ run_android_owner_ios_joiner() {
 source "$ROOT/scripts/lib/mobile-ios-android-manual-linking.sh"
 
 build_apps
+prepare_physical_share_source
 "$ADB" -s "$ANDROID_SERIAL_SELECTED" install -r -g "$ANDROID_APK" >/dev/null
 "$ADB" -s "$ANDROID_SERIAL_SELECTED" install -r -t "$ANDROID_TEST_APK" >/dev/null
 

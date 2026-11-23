@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Vision
 import XCTest
 
 private enum PhysicalLinkMarker {
@@ -81,6 +82,15 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         XCTFail("Physical linking XCTest must run on a real iOS device")
         #endif
         PhysicalLinkMarker.reset(testName: name)
+        let environment = ProcessInfo.processInfo.environment
+        if let value = environment["IRIS_DRIVE_USB_FIXTURE_PORTS"], !value.isEmpty {
+            let token = try XCTUnwrap(environment["IRIS_DRIVE_USB_FIXTURE_TOKEN"])
+            let ports = value.split(separator: ",").compactMap { UInt16($0) }
+            let fixture = try PhysicalLinkUSBFixture(ports: ports, token: token)
+            fixture.start()
+            addTeardownBlock { fixture.stop() }
+            verifyUSBServices(ports: ports)
+        }
     }
 
     func testPhysicalEnvironmentBridgeIsReady() {
@@ -161,10 +171,27 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         let manual = openManualApprovalEntry()
         let request = decodedEnvironment("IRIS_XCUITEST_MANUAL_REQUEST_B64")
         manual.tap()
-        manual.typeText(request)
+        let confirmation = app.alerts["Approve this device?"]
+        var remainder = request[...]
+        var prefix = ""
+        while !remainder.isEmpty {
+            let next = remainder.prefix(48)
+            manual.typeText(String(next))
+            prefix += next
+            remainder = remainder.dropFirst(next.count)
+            if remainder.isEmpty && confirmation.exists { break }
+            let entered = manual.value as? String ?? ""
+            let matched = zip(entered, prefix).prefix(while: { $0 == $1 }).count
+            XCTAssertTrue(entered == prefix, "Manual entry first differed at character \(matched) of \(prefix.count); field length \(entered.count)")
+        }
         PhysicalLinkMarker.emit("IRIS_IOS_MANUAL_REQUEST_ENTERED=1")
 
-        let confirmation = app.alerts["Approve this device?"]
+        if !confirmation.exists {
+            let submit = app.buttons["Approve"].firstMatch
+            XCTAssertTrue(submit.isEnabled, "The manual approval button did not accept the complete request")
+            if !submit.isHittable { manual.typeText("\n") }
+            else { submit.tap() }
+        }
         XCTAssertTrue(
             confirmation.waitForExistence(timeout: 10),
             "iOS did not recognize Android's complete manual approval request."
@@ -284,7 +311,7 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         let share = source.buttons["shareFileToIrisDriveButton"]
         XCTAssertTrue(share.waitForExistence(timeout: 10), source.debugDescription)
         share.tap()
-        tapSaveToIrisDrive(sourceApp: source)
+        savePostLinkFile(source: source, name: fileName)
         waitForShareSheetToDismiss(sourceApp: source)
         source.terminate()
 
@@ -294,34 +321,76 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         PhysicalLinkMarker.emit("IRIS_IOS_PROVIDER_WRITE_SHA256=\(PhysicalLinkMarker.sha256(content))")
     }
 
-    private func tapSaveToIrisDrive(sourceApp: XCUIApplication) {
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let sharing = XCUIApplication(bundleIdentifier: "com.apple.SharingViewService")
-        let deadline = Date().addingTimeInterval(25)
-        var openedMore = false
+    private func savePostLinkFile(source: XCUIApplication, name: String) {
+        let extensionApp = XCUIApplication(
+            bundleIdentifier: requiredEnvironment("IRIS_XCUITEST_SHARE_EXTENSION_BUNDLE_ID")
+        )
+        let displayName = requiredEnvironment("IRIS_XCUITEST_APP_DISPLAY_NAME")
+        let labels = [displayName, "Save to \(displayName)"]
+        let labelMatches = NSPredicate(format: "label IN %@", labels)
+        let save = extensionApp.buttons["shareSaveButton"]
+        var appRow = CGRect.null
+        let deadline = Date().addingTimeInterval(48)
         while Date() < deadline {
-            for candidate in [sourceApp, springboard, sharing] where candidate.state != .notRunning {
-                for element in [
-                    candidate.buttons["Save to Iris Drive"].firstMatch,
-                    candidate.cells["Save to Iris Drive"].firstMatch,
-                    candidate.staticTexts["Save to Iris Drive"].firstMatch,
-                ] where element.exists {
-                    makeHittable(element, in: candidate)
-                    element.tap()
-                    return
+            if extensionApp.state != .notRunning && save.exists { break }
+            let targets = source.descendants(matching: .any).matching(labelMatches)
+            if let item = targets.allElementsBoundByIndex.first(where: { $0.isHittable }) {
+                item.tap()
+                if save.waitForExistence(timeout: 3) { break }
+            } else if targets.count > 0 {
+                // Remote Apps-list text can report coordinates relative to its own view.
+                if let point = visibleShareRow(labels: labels, in: source) {
+                    point.tap()
+                    if save.waitForExistence(timeout: 3) { break }
+                } else {
+                    let from = source.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.82))
+                    let to = source.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.4))
+                    from.press(forDuration: 0.12, thenDragTo: to)
                 }
-                if !openedMore {
-                    let more = candidate.buttons["More"].firstMatch
-                    if more.exists {
-                        makeHittable(more, in: candidate)
-                        more.tap()
-                        openedMore = true
+            } else {
+                let more = source.cells["More"].firstMatch
+                if more.exists && more.isHittable {
+                    more.tap()
+                } else {
+                    if appRow.isNull {
+                        let row = source.scrollViews.allElementsBoundByIndex.first { scroll in
+                            scroll.cells["AirDrop"].exists || scroll.cells["Mail"].exists || scroll.cells["Messages"].exists
+                        }
+                        if let frame = row?.frame.intersection(source.frame), !frame.isEmpty {
+                            appRow = frame
+                        }
+                    }
+                    // Once swiped, iOS virtualizes the leading app cells. The carousel stays in place.
+                    if !appRow.isNull {
+                        let corner = source.coordinate(withNormalizedOffset: .zero)
+                        let start = corner.withOffset(CGVector(dx: appRow.minX + appRow.width * 0.88, dy: appRow.midY))
+                        let end = corner.withOffset(CGVector(dx: appRow.minX + appRow.width * 0.12, dy: appRow.midY))
+                        start.press(forDuration: 0.12, thenDragTo: end)
                     }
                 }
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
         }
-        XCTFail("Could not find Save to Iris Drive in the system share sheet")
+        XCTAssertTrue(save.exists, "The Drive share extension did not present its save sheet")
+        let filename = extensionApp.textFields["shareSaveName"]
+        XCTAssertEqual(filename.value as? String, name)
+        XCTAssertTrue(extensionApp.descendants(matching: .any)["shareSaveFolder"].exists)
+        XCTAssertTrue(save.isEnabled)
+        PhysicalLinkMarker.emit("IRIS_IOS_PROVIDER_SAVE_READY=1")
+        save.tap()
+    }
+
+    private func visibleShareRow(labels: [String], in source: XCUIApplication) -> XCUICoordinate? {
+        guard let screen = XCUIScreen.main.screenshot().image.cgImage else { return nil }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        do { try VNImageRequestHandler(cgImage: screen).perform([request]) }
+        catch { XCTFail("Could not read the open system Apps list"); return nil }
+        let matches = (request.results ?? []).filter { line in
+            line.topCandidates(1).first.map { labels.contains($0.string) } ?? false
+        }
+        guard matches.count == 1, let box = matches.first?.boundingBox else { return nil }
+        return source.coordinate(withNormalizedOffset: CGVector(dx: box.midX, dy: 1 - box.midY))
     }
 
     private func waitForShareSheetToDismiss(sourceApp: XCUIApplication) {
@@ -344,20 +413,31 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         open.tap()
 
         let files = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
+        let location = requiredEnvironment("IRIS_XCUITEST_APP_DISPLAY_NAME")
+        let stem = URL(fileURLWithPath: expected).deletingPathExtension().lastPathComponent
+        let item = files.descendants(matching: .any).matching(NSPredicate(
+            format: "label IN %@ OR identifier IN %@", [expected, stem], [expected, stem]
+        )).firstMatch
+        let browse = files.tabBars.buttons["Browse"].firstMatch
+        let entry = files.cells.containing(.staticText, identifier: location).firstMatch
+        var openedBrowse = false
+        var enteredLocation = false
         let deadline = Date().addingTimeInterval(45)
         while Date() < deadline {
             if files.state == .runningForeground {
-                if files.descendants(matching: .any)[expected].exists
-                    || files.descendants(matching: .any)[URL(fileURLWithPath: expected)
-                        .deletingPathExtension().lastPathComponent].exists {
-                    return
+                if item.exists { return }
+                if !enteredLocation, entry.exists, entry.isHittable {
+                    entry.tap()
+                    enteredLocation = true
+                } else if !openedBrowse, !enteredLocation, browse.exists, browse.isHittable {
+                    // Files can reopen Recents even when the product requested its provider root.
+                    browse.tap()
+                    openedBrowse = true
                 }
-                let drive = files.descendants(matching: .any)["Iris Drive"].firstMatch
-                if drive.exists, drive.isHittable { drive.tap() }
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
-        XCTFail("System Files did not expose the linked peer file \(expected): \(files.debugDescription)")
+        XCTFail("System Files did not expose the linked peer file \(expected) in \(location)")
     }
 
     private func waitForFileCount(atLeast expected: Int, timeout: TimeInterval) -> Bool {
@@ -417,6 +497,9 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         if let digest = ProcessInfo.processInfo.environment["IRIS_XCUITEST_FRAME_SHA256"],
            !digest.isEmpty {
             environment["IRIS_DRIVE_QR_FRAME_SHA256"] = digest
+        }
+        if let value = ProcessInfo.processInfo.environment["IRIS_DRIVE_USB_FIXTURE_PORTS"], !value.isEmpty {
+            environment["IRIS_DRIVE_USB_FIXTURE_PORTS"] = value
         }
         return environment
     }

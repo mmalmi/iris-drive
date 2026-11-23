@@ -22,7 +22,7 @@ for node in root.iter("node"):
     target = node
     while target is not None and target.attrib.get("clickable") != "true":
         target = parents.get(target)
-    point = center(target or node)
+    point = center(target if target is not None else node)
     if point is None:
         continue
     if target is not None:

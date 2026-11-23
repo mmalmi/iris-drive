@@ -27,7 +27,9 @@ peer uses provider commands in the sync harness; no mobile folder mount is
 created. Physical QR/manual linking runs only when both phones are controlled by
 one host (or IRIS_DRIVE_MOBILE_PHYSICAL_LINK_HOST names that host), and real
 iOS app-group writes require IRIS_DRIVE_MOBILE_LINK_ISOLATED_DEVICE=1 on a
-reserved test phone. Auto mode records an explicit skip otherwise.
+reserved test phone. Auto mode records an explicit skip otherwise. Select
+IRIS_DRIVE_MOBILE_LINK_TRANSPORT=usb to use the two tethered devices and
+disposable relay and file services. The default uses the configured network.
 USAGE
 }
 
@@ -184,6 +186,7 @@ run_physical_mobile_linking_smoke() {
     "IRIS_DRIVE_MOBILE_PHYSICAL_LINKING=${IRIS_DRIVE_MOBILE_PHYSICAL_LINKING:-auto}" \
     "IRIS_DRIVE_MOBILE_LINK_ISOLATED_DEVICE=${IRIS_DRIVE_MOBILE_LINK_ISOLATED_DEVICE:-0}" \
     "IRIS_DRIVE_MOBILE_REUSE_ANDROID_ARTIFACTS=$reuse_android" \
+    "IRIS_DRIVE_MOBILE_LINK_TRANSPORT=${IRIS_DRIVE_MOBILE_LINK_TRANSPORT:-configured}" \
     "IRIS_DRIVE_IOS_DEVICE=${IRIS_DRIVE_IOS_DEVICE:-}" \
     "IRIS_DRIVE_ANDROID_SERIAL=${IRIS_DRIVE_ANDROID_SERIAL:-}" \
     scripts/mobile-ios-android-linking-e2e.sh

@@ -59,3 +59,22 @@ send_frame_to_android() {
   "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell -T run-as "$ANDROID_PACKAGE" \
     tee "files/qr-frame-$1.png" <"$TMP/ios-request.png" >/dev/null
 }
+
+
+android_scanner_surface_ready() {
+  python3 - "$TMP/android-ui.xml" "$ANDROID_PACKAGE" <<'PYTHON'
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+nodes = [item for item in ET.parse(sys.argv[1]).iter("node") if item.get("package") == sys.argv[2]]
+labels = {item.get(key) for item in nodes for key in ("text", "content-desc")}
+for item in nodes:
+    if item.get("class") not in {"android.view.SurfaceView", "android.view.TextureView"}:
+        continue
+    bounds = [int(n) for n in re.findall(r"\d+", item.get("bounds", ""))]
+    if len(bounds) == 4 and bounds[2] > bounds[0] and bounds[3] > bounds[1] and {"Scan", "Close"} <= labels:
+        raise SystemExit(0)
+raise SystemExit(1)
+PYTHON
+}

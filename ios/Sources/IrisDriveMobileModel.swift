@@ -1962,6 +1962,15 @@ final class IrisDriveMobileModel: ObservableObject {
                 return
             }
             resetLocalState()
+            #if IRIS_DRIVE_QR_FRAME_TEST
+            if let value = environment["IRIS_DRIVE_USB_FIXTURE_PORTS"] {
+                let ports = value.split(separator: ",").compactMap { UInt16($0) }
+                if ports.count == 4 && ports.allSatisfy({ $0 > 1024 }) {
+                    _ = dispatch(["type": "replace_relays", "urls": ["ws://127.0.0.1:\(ports[0])"]])
+                    _ = dispatch(["type": "replace_blossom_servers", "urls": ["http://127.0.0.1:\(ports[1])"]])
+                }
+            }
+            #endif
         case "link-device":
             guard allowDebugStateMutation(action: "link-device", environment: environment) else {
                 return

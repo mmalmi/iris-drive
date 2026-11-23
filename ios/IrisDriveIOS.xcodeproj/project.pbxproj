@@ -58,6 +58,7 @@
 		A2D69683D223341A6401A814 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A63880B58F406AD06ACD2A66 /* Assets.xcassets */; };
 		A47AB4B03E75D356EDA7A09F /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 42FBB45ED5D614CBD642DF89 /* PrivacyInfo.xcprivacy */; };
 		AA158B7D94AE797B73C650B8 /* PhotoBackupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4134304A6A38E20AC5C0FFFF /* PhotoBackupTests.swift */; };
+		AE61E40E33A7E9D528A5979E /* PhysicalLinkedFileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35AEA7B804FC3B517E06D9F5 /* PhysicalLinkedFileTests.swift */; };
 		B53B434EB985CEF92C028364 /* ShareSaveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ED4CE5456B6960701BBD801 /* ShareSaveView.swift */; };
 		BCDFE7E8107DAF5CC4C726DC /* StartupLoadingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */; };
 		BEECD6C5F03CCBE06A737006 /* IrisDriveShareJourneyUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6DA3018D10DF4950842CEA2 /* IrisDriveShareJourneyUITests.swift */; };
@@ -73,6 +74,7 @@
 		DAD4FC45FA4BFCF4DE027480 /* PhotoBackupSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E96F2F1C4DA9ED64AC63644 /* PhotoBackupSection.swift */; };
 		DF01644D115BD8E0B2580704 /* ShareItemImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFFCB22B1FE65968BC0862BE /* ShareItemImporter.swift */; };
 		E53470B009860DC79FE39549 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6187EFB2F9F9102CE7BC1809 /* PrivacyInfo.xcprivacy */; };
+		E6E0811D0BA52CCD35B5D61B /* PhysicalLinkUSBFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77EF1FC24BC2687673953EF2 /* PhysicalLinkUSBFixture.swift */; };
 		E8C9614F1C94BB1141210E7E /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FAD09F152A81F2977621CC8 /* QRCodeScannerView.swift */; };
 		EDB65234DF8B98FA5A85E5BF /* IrisDriveContentLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5776131C4E7DA77C3A533FB /* IrisDriveContentLinks.swift */; };
 		F41146F818216FEFA22D08D4 /* IrisDriveNativeFipsStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD444DC604210414F3FDE54 /* IrisDriveNativeFipsStatus.swift */; };
@@ -149,6 +151,7 @@
 		27F50A528A1A7D8F67198F84 /* IrisDriveMobileBrowserDebug.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveMobileBrowserDebug.swift; sourceTree = "<group>"; };
 		2924EE6BC887DE0B5E1E045D /* IrisDriveIOSUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveIOSUITests.swift; sourceTree = "<group>"; };
 		31FD6FE77F71CF8F6241C514 /* IrisDriveMobileBackups.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveMobileBackups.swift; sourceTree = "<group>"; };
+		35AEA7B804FC3B517E06D9F5 /* PhysicalLinkedFileTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysicalLinkedFileTests.swift; sourceTree = "<group>"; };
 		380C73AB07C0999D07F8E4ED /* IrisDriveContentLinkDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveContentLinkDialog.swift; sourceTree = "<group>"; };
 		3CED4C5E84F31219B2961A1C /* ShareSaveModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareSaveModelTests.swift; sourceTree = "<group>"; };
 		4134304A6A38E20AC5C0FFFF /* PhotoBackupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoBackupTests.swift; sourceTree = "<group>"; };
@@ -167,6 +170,7 @@
 		709D6AD69F29693CB054EFA6 /* PhotoBackupReceipts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoBackupReceipts.swift; sourceTree = "<group>"; };
 		74CE010BD2B6A8A3362FE749 /* IrisDriveIOSShareExtensionTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = IrisDriveIOSShareExtensionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		75CEF461BE73AC852CC85DE5 /* IrisDriveDeviceApproval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveDeviceApproval.swift; sourceTree = "<group>"; };
+		77EF1FC24BC2687673953EF2 /* PhysicalLinkUSBFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysicalLinkUSBFixture.swift; sourceTree = "<group>"; };
 		78AFFB8E68F8FF140C442B9C /* IrisDriveClipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveClipboard.swift; sourceTree = "<group>"; };
 		7CA3DF1C0E66C469EE9CCFB8 /* back-hit-test.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "back-hit-test.html"; sourceTree = "<group>"; };
 		8D7AA29853DF8DF3A5364375 /* IrisDriveAppStoreScreenshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveAppStoreScreenshotTests.swift; sourceTree = "<group>"; };
@@ -216,6 +220,7 @@
 				9E4B164F4746113107B49D91 /* IrisWebGatewayRetryTests.swift */,
 				604ABE544332ACE68B5CE09C /* MobilePresenceTests.swift */,
 				4134304A6A38E20AC5C0FFFF /* PhotoBackupTests.swift */,
+				35AEA7B804FC3B517E06D9F5 /* PhysicalLinkedFileTests.swift */,
 				CE2C4253593D33F7F23D75FE /* ShareItemImporterTests.swift */,
 				3CED4C5E84F31219B2961A1C /* ShareSaveModelTests.swift */,
 			);
@@ -339,6 +344,7 @@
 				2924EE6BC887DE0B5E1E045D /* IrisDriveIOSUITests.swift */,
 				03BE277DA51C880A3758714A /* IrisDrivePhysicalLinkingUITests.swift */,
 				F6DA3018D10DF4950842CEA2 /* IrisDriveShareJourneyUITests.swift */,
+				77EF1FC24BC2687673953EF2 /* PhysicalLinkUSBFixture.swift */,
 				6A7BB1B22A4C820515A4A943 /* Fixtures */,
 			);
 			path = UITests;
@@ -651,6 +657,7 @@
 				475352EA0C4DBE384F2485B0 /* IrisWebGatewayRetryTests.swift in Sources */,
 				0ACF8EF67A058135FDAC9E1D /* MobilePresenceTests.swift in Sources */,
 				AA158B7D94AE797B73C650B8 /* PhotoBackupTests.swift in Sources */,
+				AE61E40E33A7E9D528A5979E /* PhysicalLinkedFileTests.swift in Sources */,
 				DF01644D115BD8E0B2580704 /* ShareItemImporter.swift in Sources */,
 				0BCF72504B29C05F66B5CC1B /* ShareItemImporterTests.swift in Sources */,
 				CEA258A8460E637231AFB3BC /* ShareSaveModelTests.swift in Sources */,
@@ -682,6 +689,7 @@
 				0657326FB44784D56F1EE4D5 /* IrisDriveIOSUITests.swift in Sources */,
 				02FD6AC29A536E415F19C2C0 /* IrisDrivePhysicalLinkingUITests.swift in Sources */,
 				BEECD6C5F03CCBE06A737006 /* IrisDriveShareJourneyUITests.swift in Sources */,
+				E6E0811D0BA52CCD35B5D61B /* PhysicalLinkUSBFixture.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -751,7 +759,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1053;
+				CURRENT_PROJECT_VERSION = 1054;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 8G9P8AN75D;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -908,7 +916,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1053;
+				CURRENT_PROJECT_VERSION = 1054;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 8G9P8AN75D;
 				ENABLE_NS_ASSERTIONS = NO;

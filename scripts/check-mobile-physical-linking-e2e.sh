@@ -255,11 +255,17 @@ for direction, owner_platform in (
         "exchange_post_link_provider_files",
         f"wait_for_empty_receipts {owner_platform}",
         "assert_delivery_bound",
-        "assert_authorized_config",
         "assert_ios_provider_content",
     ):
         if required not in direction:
             raise SystemExit(f"physical manual-entry direction lacks {required}")
+
+if 'assert_authorized_config "$android_config"' not in manual_ios_direction:
+    raise SystemExit("Android joiner must persist its authorized profile after restart")
+provider_test = (Path(sys.argv[1]).resolve().parents[1] / "ios/UnitTests/PhysicalLinkedFileTests.swift").read_text()
+for required in ('state.ui.profile?.authorizationState, "authorized"', "IrisDriveNativeProvider.read(", "XCTAssertEqual(actual, expected)"):
+    if required not in provider_test:
+        raise SystemExit(f"iOS device provider verification is missing {required}")
 
 manual_ios_timing = (
     'wait_for_ios_marker "IRIS_IOS_MANUAL_CONFIRMATION_READY=1"',
@@ -288,7 +294,7 @@ for direction, timing in (
 for required in (
     '.get("request_url", "")',
     'copy_android_config "$config"',
-    'copy_ios_config "$config"',
+    'read_ios_link_profile request',
     'shell input text "$request"',
     'wait_for_android_ui text "Approve this device?"',
     '"post_link_provider_writes"',
@@ -335,7 +341,8 @@ manual_owner_test = ios_test.split(
 )[1].split("func testIosJoinerWaitsForAndroidManualApproval()", 1)[0]
 for required in (
     'decodedEnvironment("IRIS_XCUITEST_MANUAL_REQUEST_B64")',
-    "manual.typeText(request)",
+    "manual.typeText(String(next))",
+    "entered == prefix",
     'app.alerts["Approve this device?"]',
     'waitForHostSignal("submit-manual-approval")',
     'confirmation.buttons["Approve"].tap()',
@@ -755,7 +762,8 @@ physical_functions="$(sed -n \
   -e '/^bool_true() {/,/^}/p' \
   -e '/^emit_skip() {/,/^}/p' \
   -e '/^reserve_physical_devices() {/,/^}/p' \
-  "$ROOT/scripts/mobile-ios-android-linking-e2e.sh")"
+  -e '/^configure_android_link_transport() {/,/^}/p' \
+  "$ROOT/scripts/mobile-ios-android-linking-e2e.sh" "$ROOT/scripts/lib/mobile-link-usb.sh")"
 for scenario in unowned auto-skip readiness-failure delegated-parent owned owned-keep; do
   adb_log="$contract_tmp/$scenario-adb.log"
   : >"$adb_log"
@@ -813,11 +821,13 @@ for scenario in unowned auto-skip readiness-failure delegated-parent owned owned
   expected_log="$contract_tmp/$scenario-expected.log"
   : >"$expected_log"
   if [[ "$scenario" == owned* ]]; then
-    for action in 'am force-stop' 'pm clear' 'am start -W -n' 'am force-stop'; do
+    for action in 'am force-stop' 'pm clear' 'pm grant' 'am start -W -n' 'am force-stop'; do
       target=to.example.irisdrive.uitest
       [[ "$action" != 'am start -W -n' ]] || target+=/.MainActivity
+      [[ "$action" != 'pm grant' ]] || target+=" android.permission.CAMERA"
       printf '%s\n' "-s contract-android shell $action $target" >>"$expected_log"
     done
+    printf '%s\n' "-s contract-android shell rm -f /data/local/tmp/iris-physical-link-$scenario.xml" >>"$expected_log"
     if [[ "$scenario" == owned ]]; then
       printf '%s\n' '-s contract-android shell pm clear to.example.irisdrive.uitest' >>"$expected_log"
     fi
