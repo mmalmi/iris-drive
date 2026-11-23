@@ -91,6 +91,19 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         PhysicalLinkMarker.emit("IRIS_XCUITEST_FINISHED=testPhysicalEnvironmentBridgeIsReady")
     }
 
+    func testPhysicalScannerRemainsVisibleUntilClosed() {
+        launchCleanAppGroup()
+        createProfile()
+        restartAndAssertAuthorized()
+        openApprovalScanner()
+        let camera = app.descendants(matching: .any)["qrScannerCamera"]
+        XCTAssertTrue(camera.waitForExistence(timeout: 10), app.debugDescription)
+        let close = app.buttons["Close"]
+        XCTAssertTrue(close.isHittable)
+        close.tap()
+        XCTAssertTrue(app.buttons["scanApprovalRequestQr"].waitForExistence(timeout: 5))
+    }
+
     func testIosOwnerApprovesAndroidThroughPhysicalCamera() {
         defer {
             PhysicalLinkMarker.emit(

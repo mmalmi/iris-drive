@@ -24,7 +24,7 @@ function stubTools(root, { apkSigner = fingerprint, badging, aligned = true } = 
   write(join(jdk, 'keytool'), `case "$1" in -exportcert) printf CERT ;; -printcert) echo "SHA256: ${colonUpper(fingerprint)}" ;; esac`)
   write(join(jdk, 'jarsigner'), `if [ "$1" = -verify ]; then echo "jar verified."; exit 0; fi
 while [ "$1" != -signedjar ]; do shift; done; cp "$3" "$2"`)
-  write(join(buildTools, 'aapt'), `printf "%s\\n" "${badging ?? "package: name='to.iris.drive' versionCode='9009011' versionName='9.9.9' platformBuildVersionName='16'"}" "native-code: 'arm64-v8a'"`)
+  write(join(buildTools, 'aapt'), `printf "%s\\n" "${badging ?? "package: name='to.iris.drive' versionCode='9009012' versionName='9.9.9' platformBuildVersionName='16'"}" "native-code: 'arm64-v8a'"`)
   write(join(buildTools, 'zipalign'), `if [ "$1" = -c ]; then exit ${aligned ? 0 : 1}; fi; cp "$4" "$5"`)
   write(join(buildTools, 'apksigner'), `if [ "$1" = verify ]; then echo "Signer #1 certificate SHA-256 digest: ${apkSigner}"; exit 0; fi
 while [ "$1" != --out ]; do shift; done; cp "$3" "$2"`)
@@ -67,7 +67,7 @@ test('a different signer, package version or license is refused', () => {
   for (const [options, pattern] of [
     [{ apkSigner: 'f'.repeat(64) }, /Signed APK certificate differs/],
     [{ badging: "package: name='to.iris.drive' versionCode='1' versionName='9.9.9'" }, /package or version differs/],
-    [{ badging: "package: name='to.iris.drive.debug' versionCode='9009011' versionName='9.9.9'" }, /package or version differs/],
+    [{ badging: "package: name='to.iris.drive.debug' versionCode='9009012' versionName='9.9.9'" }, /package or version differs/],
     [{ apkLicense: 'other license' }, /Hosted Android license validation failed/],
   ]) {
     assert.throws(fixture(options).sign, pattern)

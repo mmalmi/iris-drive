@@ -6,6 +6,8 @@
   and a native app.
 - Open the current Iris Sites catalog through the native Drive connection.
 - Connect approved devices directly when a configured address works in only one direction.
+- Open the pairing scanner from Devices on iPhone and identify the camera preview
+  with Android accessibility tools.
 
 ## 0.1.49 - 2026-11-19
 

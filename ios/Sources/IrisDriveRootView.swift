@@ -804,6 +804,7 @@ private struct DevicesView: View {
     @ObservedObject var model: IrisDriveMobileModel
     @State private var showingAddDevice = false
     @State private var showingAddRecoveryKey = false
+    @State private var scannerPresented = false
     @State private var devicePendingDelete: IrisDriveDevice?
     @State private var devicePendingRename: IrisDriveDevice?
     @State private var deviceRenameLabel = ""
@@ -819,7 +820,9 @@ private struct DevicesView: View {
     var body: some View {
         List {
             if model.canAdminProfile {
-                AddDeviceSection(model: model, isExpanded: $showingAddDevice)
+                AddDeviceSection(model: model, isExpanded: $showingAddDevice) {
+                    scannerPresented = true
+                }
             }
             Section {
                 if deviceActors.isEmpty {
@@ -849,6 +852,13 @@ private struct DevicesView: View {
                     }
                     .accessibilityIdentifier("addRecoveryKeyButton")
                 }
+            }
+        }
+        .sheet(isPresented: $scannerPresented) {
+            QRCodeScannerSheet { code in
+                let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+                model.approveDeviceKey = trimmed
+                model.requestDeviceApprovalConfirmation(trimmed)
             }
         }
         .sheet(isPresented: $showingAddRecoveryKey) {
@@ -1034,7 +1044,7 @@ private struct DevicesView: View {
 private struct AddDeviceSection: View {
     @ObservedObject var model: IrisDriveMobileModel
     @Binding var isExpanded: Bool
-    @State private var scannerPresented = false
+    let openScanner: () -> Void
 
     private var canAddManualDevice: Bool {
         IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -1058,9 +1068,7 @@ private struct AddDeviceSection: View {
                     .onChange(of: model.approveDeviceKey) { _, newValue in
                         model.requestDeviceApprovalConfirmation(newValue)
                     }
-                Button {
-                    scannerPresented = true
-                } label: {
+                Button(action: openScanner) {
                     Label("Scan QR", systemImage: "qrcode.viewfinder")
                 }
                 .accessibilityIdentifier("scanApprovalRequestQr")
@@ -1115,13 +1123,6 @@ private struct AddDeviceSection: View {
         }
         .onAppear {
             prefillUiTestDeviceFields()
-        }
-        .sheet(isPresented: $scannerPresented) {
-            QRCodeScannerSheet { code in
-                let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
-                model.approveDeviceKey = trimmed
-                model.requestDeviceApprovalConfirmation(trimmed)
-            }
         }
     }
 

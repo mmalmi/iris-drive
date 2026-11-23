@@ -27,14 +27,14 @@ function setup() {
 test('export runs ios-build with the hosted product and records the exported IPA', () => {
   const { checkout, product, calls, phase } = setup()
   const layout = phase('ios-build', 'ios-export')
-  assert.equal(layout.stage, join(checkout.root, 'dist', `ios-9.9.9-9009011-${checkout.commit.slice(0, 8)}`))
+  assert.equal(layout.stage, join(checkout.root, 'dist', `ios-9.9.9-9009012-${checkout.commit.slice(0, 8)}`))
   assert.equal(calls[0].program, 'scripts/ios-build')
   assert.deepEqual(calls[0].args, ['ios-export'])
   const { env } = calls[0]
   assert.equal(env.IRIS_DRIVE_IOS_HOSTED_PRODUCT_DIR, product)
   assert.equal(env.IRIS_DRIVE_IOS_INTERNAL_ONLY, 'false')
   assert.equal(env.IRIS_DRIVE_IOS_MARKETING_VERSION, '9.9.9')
-  assert.equal(env.IRIS_DRIVE_IOS_BUILD_NUMBER, '9009011')
+  assert.equal(env.IRIS_DRIVE_IOS_BUILD_NUMBER, '9009012')
   assert.equal(env.IRIS_DRIVE_IOS_EXPORT_DIR, join(layout.stage, 'eligible'))
   const sha = createHash('sha256').update('signed ipa').digest('hex')
   assert.equal(readFileSync(join(layout.stage, 'eligible.ipa.sha256'), 'utf8'), `${sha}  Iris Drive.ipa\n`)

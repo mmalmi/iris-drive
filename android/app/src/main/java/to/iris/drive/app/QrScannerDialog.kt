@@ -2,6 +2,7 @@ package to.iris.drive.app
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.view.View
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
@@ -40,8 +41,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -133,6 +132,8 @@ private fun QrScannerHost(
         remember {
             PreviewView(context).apply {
                 scaleType = PreviewView.ScaleType.FILL_CENTER
+                contentDescription = "QR scanner camera"
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
             }
         }
     val scanner =
@@ -243,9 +244,7 @@ private fun QrScannerCamera(
     Box(modifier = modifier.background(Color.Black)) {
         AndroidView(
             factory = { previewView },
-            modifier = Modifier
-                .fillMaxSize()
-                .semantics { contentDescription = "QR scanner camera" },
+            modifier = Modifier.fillMaxSize(),
         )
         QrScannerCrosshair(modifier = Modifier.fillMaxSize())
         Row(
