@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.50 - 2026-11-23
+
+- Keep recent Calendar edits when the same calendar is changed in the browser
+  and a native app.
+- Open the current Iris Sites catalog through the native Drive connection.
+
 ## 0.1.49 - 2026-11-19
 
 - Recover personal files from private Trash with `idrive trash`. Trash syncs
@@ -7,9 +13,6 @@
 - A shared file stays in the folder until its owner has a verified copy on
   their Drive. Older shared files without a known owner are protected from
   deletion by this flow.
-- Keep recent Calendar edits when the same calendar is changed in the browser
-  and a native app.
-- Open the current Iris Sites catalog through the native Drive connection.
 
 ## 0.1.48 - 2026-11-18
 
