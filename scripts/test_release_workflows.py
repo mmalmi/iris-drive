@@ -671,6 +671,7 @@ echo "$DERIVED_DATA"
                     + cleanup + run_ui
                     + f"xcodebuild() {{ return {xcode_status}; }}\n"
                     + "ios_xcuitest_accessibility_session_disabled_after() { return 1; }\n"
+                    + "ios_xcuitest_background_assertion_timed_out_after() { return 1; }\n"
                     + ('rm() { if [[ "$1" == -rf ]]; then return 19; fi; command rm "$@"; }\n' if cleanup_failure else "")
                     + ("DESTINATION=fixture\n" if destination else "unset DESTINATION\n")
                     + "run_ui_test fixture/test\n" + completion,

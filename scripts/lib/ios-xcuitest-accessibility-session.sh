@@ -29,6 +29,26 @@ raise SystemExit(0 if "Timed out while enabling automation mode." in text else 1
 PY
 }
 
+# A loaded runner can time out while RunningBoard grants the launched app its
+# background assertion, before the test does anything. Only that, with no other
+# error in the same try, is a runner failure.
+ios_xcuitest_background_assertion_timed_out_after() {
+  local log="$1" byte_offset="$2"
+  [[ -f "$log" && "$byte_offset" =~ ^[0-9]+$ ]] || return 1
+  python3 - "$log" "$byte_offset" <<'PY'
+import pathlib, re, sys
+path=pathlib.Path(sys.argv[1])
+offset=int(sys.argv[2])
+with path.open("rb") as handle:
+    handle.seek(offset)
+    text=handle.read().decode("utf-8", errors="replace")
+errors=re.findall(r"^.*: error: .*$", text, re.MULTILINE)
+timed_out=lambda line: ("Failed to get background assertion for target app" in line
+                        and "Timed out while acquiring background assertion" in line)
+raise SystemExit(0 if errors and all(timed_out(line) for line in errors) else 1)
+PY
+}
+
 restart_ios_simulator_accessibility_session() {
   local device_udid="$1"
   xcrun simctl shutdown "$device_udid" >/dev/null

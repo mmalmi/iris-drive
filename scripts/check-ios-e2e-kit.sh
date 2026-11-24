@@ -405,6 +405,7 @@ require_contains scripts/ios-device-iris-apps-smoke.sh 'data.get("webview_ready_
 require_contains scripts/ios-device-iris-apps-smoke.sh 'required_http_200'
 require_contains scripts/ios-gui-linking-smoke.sh 'ios_xcuitest_accessibility_session_disabled_after "$BUILD_LOG" "$build_log_offset"'
 require_contains scripts/ios-gui-linking-smoke.sh 'restart_ios_simulator_accessibility_session "$DEVICE_UDID"'
+require_contains scripts/ios-gui-linking-smoke.sh 'ios_xcuitest_background_assertion_timed_out_after "$BUILD_LOG" "$build_log_offset"'
 require_contains ios/Sources/IrisDriveMobileBrowser.swift "irisDebugWebViewIsMaterialized"
 require_contains ios/UnitTests/IrisWebGatewayRetryTests.swift "testMaterializedLauncherDoesNotRequireNavigationDelegateCompletion"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "testShareSheetImportsFileFromExternalSender"
@@ -462,6 +463,23 @@ offset="$(wc -c <"$accessibility_log" | tr -d ' ')"
 printf '%s\n' 'Failed to initialize for UI testing: Timed out while enabling automation mode.' >>"$accessibility_log"
 ios_xcuitest_automation_mode_timed_out_after "$accessibility_log" "$offset" \
   || { echo "current XCUITest automation-mode timeout was not classified" >&2; exit 1; }
+background_assertion="<unknown>:0: error: -[IrisDriveIOSUITests.IrisDriveIOSUITests testCancelSignInRequestRequiresConfirmation] : Failed to get background assertion for target app with pid 19985: Timed out while acquiring background assertion."
+offset="$(wc -c <"$accessibility_log" | tr -d ' ')"
+printf '%s\n' "$background_assertion" >>"$accessibility_log"
+ios_xcuitest_background_assertion_timed_out_after "$accessibility_log" "$offset" \
+  || { echo "current XCUITest background-assertion timeout was not classified" >&2; exit 1; }
+offset="$(wc -c <"$accessibility_log" | tr -d ' ')"
+if ios_xcuitest_background_assertion_timed_out_after "$accessibility_log" "$offset"; then
+  echo "stale background-assertion timeouts from an earlier test must not trigger a retry" >&2
+  exit 1
+fi
+printf '%s\n' "$background_assertion" \
+  '/ios/UITests/IrisDriveIOSUITests.swift:120: error: -[IrisDriveIOSUITests.IrisDriveIOSUITests testCancelSignInRequestRequiresConfirmation] : XCTAssertTrue failed' \
+  >>"$accessibility_log"
+if ios_xcuitest_background_assertion_timed_out_after "$accessibility_log" "$offset"; then
+  echo "a product assertion beside a background-assertion timeout must not trigger a retry" >&2
+  exit 1
+fi
 rm -f "$accessibility_log"
 trap - EXIT
 

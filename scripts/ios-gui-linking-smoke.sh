@@ -462,6 +462,12 @@ PY
     restart_ios_simulator_accessibility_session "$DEVICE_UDID"
     status=0
     "${test_command[@]}" >>"$BUILD_LOG" 2>&1 || status=$?
+  elif [[ "$status" != 0 ]] \
+    && ios_xcuitest_background_assertion_timed_out_after "$BUILD_LOG" "$build_log_offset"; then
+    echo "[ios-gui-smoke] retrying $only_testing once after the app launch timed out acquiring its background assertion" >&2
+    xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    status=0
+    "${test_command[@]}" >>"$BUILD_LOG" 2>&1 || status=$?
   fi
   if [[ "$status" != 0 ]]; then
     echo "[ios-gui-smoke] $only_testing failed (Xcode $status). See $BUILD_LOG" >&2
