@@ -103,12 +103,16 @@ fn remove_if_present(path: &Path) -> Result<()> {
 }
 
 /// Settings files may hold absolute paths into the previous folder, including
-/// JSON written with escaped slashes. Point them at the new folder.
+/// JSON written with escaped slashes. Point them at the new folder. Only whole
+/// path components match, so a sibling such as `<folder> Dev` stays as it is.
 fn point_settings_at(root: &Path, from: &Path, to: &Path) -> Result<()> {
     let (old, new) = (from.display().to_string(), to.display().to_string());
+    let (old_escaped, new_escaped) = (old.replace('/', "\\/"), new.replace('/', "\\/"));
     let replacements = [
-        (old.clone(), new.clone()),
-        (old.replace('/', "\\/"), new.replace('/', "\\/")),
+        (format!("{old}/"), format!("{new}/")),
+        (format!("{old}\""), format!("{new}\"")),
+        (format!("{old_escaped}\\/"), format!("{new_escaped}\\/")),
+        (format!("{old_escaped}\""), format!("{new_escaped}\"")),
     ];
     for entry in fs::read_dir(root)? {
         let entry = entry?;

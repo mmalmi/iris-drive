@@ -96,7 +96,9 @@ fn points_copied_settings_at_the_new_folder() {
     );
     write(
         &from.join("Config/extra.toml"),
-        &format!("cache = \"{old}/Config/cache\"\n"),
+        &format!(
+            "cache = \"{old}/Config/cache\"\nroot = \"{old}\"\nsibling = \"{old} Dev/Config\"\n"
+        ),
     );
     fs::write(from.join("Config/blocks/data.mdb"), old.as_bytes()).unwrap();
 
@@ -112,7 +114,10 @@ fn points_copied_settings_at_the_new_folder() {
     );
     assert_eq!(
         fs::read_to_string(to.join("Config/extra.toml")).unwrap(),
-        format!("cache = \"{new}/Config/cache\"\n")
+        format!(
+            "cache = \"{new}/Config/cache\"\nroot = \"{new}\"\nsibling = \"{old} Dev/Config\"\n"
+        ),
+        "only whole path components of the previous folder change"
     );
     assert_eq!(
         fs::read(to.join("Config/blocks/data.mdb")).unwrap(),
