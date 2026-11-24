@@ -21,6 +21,7 @@ final class ShareSaveModel: ObservableObject {
         case notSetUp
         case ready
         case saving
+        case waitingToSave
         case syncing
         case saved(String)
         case failed(String)
@@ -31,6 +32,8 @@ final class ShareSaveModel: ObservableObject {
     @Published var folders: [String] = []
     /// Folder path inside My Drive; empty is My Drive itself.
     @Published var folder = ""
+
+    private(set) var savedItemCount = 0
 
     var canSave: Bool {
         phase == .ready && !items.isEmpty
@@ -69,10 +72,7 @@ final class ShareSaveModel: ObservableObject {
             } catch {
                 guard !Task.isCancelled else { return }
                 let issue = error as NSError
-                guard issue.domain == NSFileProviderErrorDomain,
-                      issue.code == NSFileProviderError.serverUnreachable.rawValue,
-                      issue.localizedDescription.range(of: #"Missing chunk: [0-9a-f]{64}\b"#,
-                                                       options: .regularExpression) != nil else {
+                guard Self.hasMissingBlock(issue) else {
                     phase = .failed(issue.localizedDescription)
                     return
                 }
@@ -85,17 +85,44 @@ final class ShareSaveModel: ObservableObject {
         }
     }
 
+    nonisolated private static func hasMissingBlock(_ issue: NSError) -> Bool {
+        issue.domain == NSFileProviderErrorDomain && issue.code == NSFileProviderError.serverUnreachable.rawValue
+            && issue.localizedDescription.range(of: #"Missing chunk: [0-9a-f]{64}\b"#, options: .regularExpression) != nil
+    }
+
     func save(using saveItem: @escaping (PendingSharedItem, String) throws -> Void,
+              delays: [Duration] = [.milliseconds(250), .milliseconds(750), .seconds(2), .seconds(4)],
               sync: (() -> String?)? = nil, done: @escaping () -> Void) {
-        guard canSave else { return }
+        guard canSave || phase == .waitingToSave else { return }
         phase = .saving
         let items = items
         let folder = folder
         let destination = destinationName
+        let firstPending = savedItemCount
         Task.detached {
             do {
-                for item in items {
-                    try saveItem(item, folder)
+                var waits = delays.makeIterator()
+                var index = firstPending
+                while index < items.count {
+                    do {
+                        try saveItem(items[index], folder)
+                        index += 1
+                    } catch {
+                        let issue = error as NSError
+                        // The core opens the provider root before choosing a name or writing bytes.
+                        // Failures during or after mutation must never replay an import.
+                        guard issue.localizedDescription.hasPrefix("building provider root:"),
+                              Self.hasMissingBlock(issue) else { throw error }
+                        guard let delay = waits.next() else {
+                            let nextItem = index
+                            await MainActor.run {
+                                self.savedItemCount = nextItem
+                                self.phase = .waitingToSave
+                            }
+                            return
+                        }
+                        try await Task.sleep(for: delay)
+                    }
                 }
                 if let sync {
                     await MainActor.run { self.phase = .syncing }
@@ -132,6 +159,12 @@ struct ShareSaveView: View {
                     Text("Drive folders haven’t finished syncing.")
                     Button("Try Again", action: onRetryFolders)
                         .accessibilityIdentifier("shareRetryFolders")
+                case .waitingToSave:
+                    Text(model.savedItemCount == 0
+                         ? "Waiting for the destination folder to finish syncing."
+                         : "Saved \(model.savedItemCount) of \(model.items.count) items. Waiting for the destination folder to finish syncing.")
+                    Button("Try Again", action: onSave)
+                        .accessibilityIdentifier("shareRetrySave")
                 case .notSetUp:
                     Text("Open Iris Drive and set it up on this device first.")
                         .accessibilityIdentifier("shareSaveNotSetUp")
@@ -147,6 +180,7 @@ struct ShareSaveView: View {
                             }
                         }
                     }
+                    .disabled(model.phase == .saving)
                     Section {
                         Picker("Save in", selection: $model.folder) {
                             Text("My Drive").tag("")
@@ -157,6 +191,7 @@ struct ShareSaveView: View {
                         .pickerStyle(.navigationLink)
                         .accessibilityIdentifier("shareSaveFolder")
                     }
+                    .disabled(model.phase == .saving)
                     if model.phase == .saving {
                         ProgressView("Saving…")
                     }
@@ -179,7 +214,7 @@ struct ShareSaveView: View {
                         .disabled(model.phase == .saving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    if !closesOnly {
+                    if !closesOnly && model.phase != .waitingToSave {
                         Button("Save", action: onSave)
                             .disabled(!model.canSave)
                             .accessibilityIdentifier("shareSaveButton")

@@ -132,6 +132,73 @@ final class ShareSaveModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .saved("Saved 2 items to My Drive"))
     }
 
+    func testSaveResumesThePendingItemAfterFolderBlocksArrive() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let profile = dir.appendingPathComponent("profile")
+        let core = IrisDriveNativeCore(dataDir: profile.path, appVersion: "test")
+        _ = core.dispatchJson(#"{"type":"create_profile","app_key_label":"Share test"}"#)
+        let first = item("First.txt")
+        let second = item("Second.txt")
+        defer {
+            try? FileManager.default.removeItem(at: first.source)
+            try? FileManager.default.removeItem(at: second.source)
+        }
+        try Data("first".utf8).write(to: first.source)
+        try Data("second".utf8).write(to: second.source)
+        let model = ShareSaveModel()
+        model.loaded([first, second], folders: [])
+        let blocks = profile.appendingPathComponent("blocks")
+        let withheld = dir.appendingPathComponent("in-transit")
+        let attempts = Recorder()
+        let finished = expectation(description: "both files saved")
+        model.save(using: { item, folder in
+            attempts.add(item.name)
+            let response = IrisDriveNativeProvider.stageSharedFile(dataDir: profile.path, parent: folder,
+                                                                    displayName: item.name, sourcePath: item.source.path)
+            struct Result: Decodable { let error: String? }
+            if let error = try JSONDecoder().decode(Result.self, from: Data(response.utf8)).error {
+                XCTAssertTrue(error.hasPrefix("building provider root:"))
+                if FileManager.default.fileExists(atPath: blocks.path) {
+                    try FileManager.default.moveItem(at: blocks, to: dir.appendingPathComponent("empty-store"))
+                }
+                try FileManager.default.moveItem(at: withheld, to: blocks)
+                throw NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.serverUnreachable.rawValue,
+                              userInfo: [NSLocalizedDescriptionKey: error])
+            }
+            if item.id == first.id { try FileManager.default.moveItem(at: blocks, to: withheld) }
+        }, done: { finished.fulfill() })
+        await fulfillment(of: [finished], timeout: 5)
+        XCTAssertEqual(attempts.values, ["First.txt", "Second.txt", "Second.txt"])
+        for saved in [first, second] {
+            let readback = dir.appendingPathComponent(saved.name)
+            _ = IrisDriveNativeProvider.read(dataDir: profile.path, path: saved.name, outputPath: readback.path)
+            XCTAssertEqual(try Data(contentsOf: readback), try Data(contentsOf: saved.source))
+        }
+    }
+
+    func testRetryAfterWaitingKeepsPreviouslySavedItems() async {
+        let model = ShareSaveModel()
+        model.loaded([item("a"), item("b")], folders: [])
+        let saved = Recorder()
+        let pending = expectation(description: "file staged for retry")
+        let observe = model.$phase.sink { if $0 == .waitingToSave { pending.fulfill() } }
+        defer { observe.cancel() }
+        model.save(using: { item, _ in
+            if item.name == "b" {
+                throw NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.serverUnreachable.rawValue,
+                              userInfo: [NSLocalizedDescriptionKey: "building provider root: tree: Missing chunk: " + String(repeating: "f", count: 64)])
+            }
+            saved.add(item.name)
+        }, delays: [], done: { XCTFail("Closed with a file still staged") })
+        await fulfillment(of: [pending], timeout: 2)
+        XCTAssertEqual(model.savedItemCount, 1)
+        let finished = expectation(description: "retry saved remaining file")
+        model.save(using: { item, _ in saved.add(item.name) }, done: { finished.fulfill() })
+        await fulfillment(of: [finished], timeout: 3)
+        XCTAssertEqual(saved.values, ["a", "b"])
+    }
+
     func testAFailureStaysOnScreenAndTheSheetDoesNotClose() async {
         let model = ShareSaveModel()
         model.loaded([item("Notes.txt")], folders: [])

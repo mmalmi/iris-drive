@@ -86,8 +86,8 @@ export function buildNumberFromVersion(version) {
     throw new Error('Build-number minor and patch components must each be at most 999')
   }
   const versionCode = major * 1_000_000 + minor * 1_000 + patch
-  // Apple already processed builds 1051 through 1054 for 0.1.50.
-  const build = versionCode + BUILD_NUMBER_EPOCH + (versionCode >= 1050 ? 4 : 0)
+  // Apple already processed builds 1051 through 1055 for 0.1.50.
+  const build = versionCode + BUILD_NUMBER_EPOCH + (versionCode >= 1050 ? 5 : 0)
   if (!Number.isSafeInteger(build) || build > 2_147_483_647) {
     throw new Error(`Build number is outside the supported Android integer range: ${build}`)
   }

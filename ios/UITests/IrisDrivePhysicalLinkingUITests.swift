@@ -331,7 +331,7 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         let save = extensionApp.buttons["shareSaveButton"]
         let sheet = extensionApp.buttons["shareSaveCancel"]
         let filename = extensionApp.textFields["shareSaveName"]
-        let issue = extensionApp.descendants(matching: .any)["shareSaveError"]
+        let issue = extensionApp.staticTexts.matching(identifier: "shareSaveError").firstMatch
         let retry = extensionApp.buttons["shareRetryFolders"]
         var retriedFolders = false
         var appRow = CGRect.null
@@ -409,15 +409,36 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
     }
 
     private func waitForShareSheetToDismiss(sourceApp: XCUIApplication) {
-        let deadline = Date().addingTimeInterval(15)
+        let extensionApp = XCUIApplication(
+            bundleIdentifier: requiredEnvironment("IRIS_XCUITEST_SHARE_EXTENSION_BUNDLE_ID")
+        )
+        let share = sourceApp.buttons["shareFileToIrisDriveButton"]
+        let pending = extensionApp.staticTexts.matching(NSPredicate(
+            format: "identifier == %@ AND label BEGINSWITH %@", "shareSaveResult", "Saved on this iPhone."
+        )).firstMatch
+        let issue = extensionApp.staticTexts.matching(identifier: "shareSaveError").firstMatch
+        let close = extensionApp.buttons["shareSaveCancel"]
+        let deadline = Date().addingTimeInterval(PhysicalLinkTimeouts.postLink)
+        var closed = false
         while Date() < deadline {
-            if sourceApp.buttons["shareFileToIrisDriveButton"].isHittable
-                || sourceApp.staticTexts["Saved to Iris Drive"].exists {
-                return
+            if share.exists, let outcome = share.value as? String {
+                switch outcome {
+                case "Shared": return
+                case "Failed", "Cancelled": return XCTFail("The share source reported " + outcome)
+                default: break
+                }
+            }
+            if extensionApp.state != .notRunning {
+                if issue.exists { return XCTFail("Drive could not save the shared file: \(issue.label)") }
+                if !closed && pending.exists && close.exists && close.isHittable {
+                    // An offline save stays on screen until the person closes its confirmation.
+                    close.tap()
+                    closed = true
+                }
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
-        XCTFail("Save to Iris Drive did not complete")
+        XCTFail("The share source did not receive completion after Save")
     }
 
     private func assertPeerFileVisibleThroughSystemFiles() {

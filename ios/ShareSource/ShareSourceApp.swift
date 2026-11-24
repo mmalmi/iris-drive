@@ -73,6 +73,11 @@ final class ShareSourceViewController: UIViewController {
             ?? NSItemProvider(item: url as NSURL, typeIdentifier: UTType.fileURL.identifier)
         itemProvider.suggestedName = filename
         let controller = UIActivityViewController(activityItems: [itemProvider], applicationActivities: nil)
+        shareButton.accessibilityValue = "Sharing"
+        controller.completionWithItemsHandler = { [weak self] _, completed, _, error in
+            let outcome = error == nil ? (completed ? "Shared" : "Cancelled") : "Failed"
+            self?.shareButton.accessibilityValue = outcome
+        }
         controller.popoverPresentationController?.sourceView = shareButton
         controller.popoverPresentationController?.sourceRect = shareButton.bounds
         present(controller, animated: false)

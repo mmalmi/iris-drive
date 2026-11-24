@@ -376,7 +376,11 @@ for required in (
     "XCUIDevice.shared.press(.home)",
     'app.textFields["manualDeviceId"]',
     "shareFileToIrisDriveButton",
-    "Save to Iris Drive",
+    'requiredEnvironment("IRIS_XCUITEST_APP_DISPLAY_NAME")',
+    r'let labels = [displayName, "Save to \(displayName)"]',
+    'case "Shared": return',
+    '"shareSaveResult", "Saved on this iPhone."',
+    'extensionApp.staticTexts.matching(identifier: "shareSaveError").firstMatch',
     r"\(runId)-\(signalPrefix)-\(name).signal",
 ):
     if required not in ios_test:
