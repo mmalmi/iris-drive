@@ -331,11 +331,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             }
             ProviderCmd::Read { path, output } => {
                 let path = normalize_provider_path(&path)?;
-                let item = provider.item(&path).await?;
-                if item.kind == ItemKind::Directory {
-                    anyhow::bail!("cannot read directory: {path}");
-                }
-                let bytes = provider.read(&path, 0, item.size).await?;
+                let (item, bytes) = iris_drive_core::provider::read::read_provider_file(
+                    config_dir, &provider, &path,
+                )
+                .await?;
                 if let Some(parent) = output.parent() {
                     std::fs::create_dir_all(parent)
                         .with_context(|| format!("creating {}", parent.display()))?;

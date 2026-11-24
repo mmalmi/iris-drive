@@ -360,6 +360,51 @@ where
     })
 }
 
+/// Fetch the blocks of one file (a file CID, not a Drive root) that are not
+/// stored locally. A block the servers do not have is an explicit miss.
+pub async fn download_file<L>(
+    local_store: Arc<L>,
+    file: &Cid,
+    client: BlossomClient,
+) -> Result<DownloadReport, BlossomSyncError>
+where
+    L: Store + Send + Sync + 'static,
+{
+    if client.read_servers().is_empty() {
+        return Err(BlossomSyncError::NoServers);
+    }
+    let writeback = Arc::new(WriteBackBlossomStore::new(local_store, client));
+    let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
+    let walked = hashtree_core::diff::collect_hashes(&tree, file, 4).await;
+    if writeback.missing() > 0 {
+        let detail = writeback
+            .first_missing()
+            .unwrap_or_else(|| format!("{} blocks", writeback.missing()));
+        return Err(BlossomSyncError::MissingOnBlossom(detail));
+    }
+    Ok(DownloadReport {
+        total_hashes: walked?.len(),
+        fetched: writeback.fetched(),
+        already_local: writeback.already_local(),
+    })
+}
+
+/// Retry [`download_file`] like [`download_tree_with_retry`].
+pub async fn download_file_with_retry<L>(
+    local_store: Arc<L>,
+    file: &Cid,
+    client: BlossomClient,
+    retry_delays_secs: &[u64],
+) -> Result<DownloadReport, BlossomSyncError>
+where
+    L: Store + Send + Sync + 'static,
+{
+    retry_missing_on_blossom(retry_delays_secs, || {
+        download_file(local_store.clone(), file, client.clone())
+    })
+    .await
+}
+
 /// Retry [`download_tree`] across a bounded set of delays when Blossom
 /// metadata is visible before the just-uploaded blocks are readable from
 /// the backing CDN.
@@ -372,9 +417,23 @@ pub async fn download_tree_with_retry<L>(
 where
     L: Store + Send + Sync + 'static,
 {
+    retry_missing_on_blossom(retry_delays_secs, || {
+        download_tree(local_store.clone(), root, client.clone())
+    })
+    .await
+}
+
+async fn retry_missing_on_blossom<F, Fut>(
+    retry_delays_secs: &[u64],
+    mut download: F,
+) -> Result<DownloadReport, BlossomSyncError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<DownloadReport, BlossomSyncError>>,
+{
     let mut attempt = 0usize;
     loop {
-        match download_tree(local_store.clone(), root, client.clone()).await {
+        match download().await {
             Ok(report) => return Ok(report),
             Err(BlossomSyncError::MissingOnBlossom(_)) if attempt < retry_delays_secs.len() => {
                 let delay = retry_delays_secs[attempt];

@@ -435,11 +435,12 @@ fn run_native_provider_read(
     runtime.block_on(async {
         let path = normalize_provider_path(path)?;
         let (_daemon, provider, _visible_root) = native_provider(data_dir).await?;
-        let item = provider.item(&path).await?;
-        if item.kind == ItemKind::Directory {
-            anyhow::bail!("cannot read directory: {path}");
-        }
-        let bytes = provider.read(&path, 0, item.size).await?;
+        let (item, bytes) = iris_drive_core::provider::read::read_provider_file(
+            Path::new(data_dir),
+            &provider,
+            &path,
+        )
+        .await?;
         let output = PathBuf::from(output_path);
         if let Some(parent) = output.parent() {
             std::fs::create_dir_all(parent)

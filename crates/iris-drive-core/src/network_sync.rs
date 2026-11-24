@@ -663,6 +663,21 @@ pub async fn download_applied_drive_roots(
     Ok(report)
 }
 
+/// Download the blocks of one file that are not stored on this device from
+/// the configured file service. Providers call this when a listed file is
+/// opened before sync has stored its bytes.
+pub async fn download_file_from_blossom(config_dir: &Path, file: &Cid) -> Result<DownloadReport> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
+    let daemon = Daemon::open(config_dir).context("opening daemon for Blossom download")?;
+    let local = daemon.tree().get_store().clone();
+    let client = blossom_sync_client(device.keys().clone(), &config.blossom_servers);
+    Ok(
+        blossom_sync::download_file_with_retry(local, file, client, BLOSSOM_DOWNLOAD_RETRY_DELAYS)
+            .await?,
+    )
+}
+
 #[must_use]
 pub fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
     state.active_root_writer_app_key_pubkeys()
