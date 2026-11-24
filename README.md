@@ -479,7 +479,11 @@ IRIS_STACK_GATE_RECEIPT=<stack/receipt.json> IRIS_DRIVE_CATALOG_GATE_RECEIPT=<ca
    `haps` and `htree` pinned by version and SHA-256 in
    `scripts/release-tools.lock.json`; the archives are verified before every
    use. The Haps key comes from `NOSTR_KEY_PATH` in `.env.zapstore.local`
-   unless `HAPS_KEY_FILE` is set. Final publication requires the
+   unless `HAPS_KEY_FILE` is set. The signed release head goes to the
+   release-head provider, the always-on htree daemon that serves it to mesh
+   updaters (`IRIS_DRIVE_RELEASE_PROVIDER_CONFIG_DIR`, default the
+   `to.iris.drive.release-publisher` launch agent's config); publishing stops
+   unless that provider then serves the new root. Final publication requires the
    [pinned Iris Stack process-gate receipt](https://github.com/irislib/iris-stack/blob/9bb0e9361afa6b2b031c243af21cebbdefa1de4e/docs/integration-lab.md)
    for the exact annotated tag; it checks the source tuple, recovery, private
    blob protection and CPU/bandwidth budgets. The catalog receipt must match

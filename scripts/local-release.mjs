@@ -51,6 +51,9 @@ import { readNativeCatalogReceipt, verifyNativeCatalogArchive } from './native-c
 import { macosReleaseSmokeCommand } from './macos-release-smoke-host.mjs'
 import { assertSignedTeam, selectMacosSigningIdentity } from './macos-signing-identity.mjs'
 import { releaseToolsEnv } from './release-tools.mjs'
+import {
+  providerConfigDir, providerPublishEnv, providerResolveUrl, releaseHeadProvider, requireProviderHead,
+} from './release-head-provider.mjs'
 import { stageHostedProduct } from './stage-hosted-product.mjs'
 import { loadReleaseEnv } from './release-env.mjs'
 import {
@@ -1222,7 +1225,7 @@ function stageRelease({
   )
 }
 
-function publishRelease({ stageDir, releaseTree, tag, draft, dryRun, env = process.env }) {
+function publishRelease({ stageDir, releaseTree, tag, draft, dryRun, env = process.env, provider }) {
   // Drive 0.1.39 needs 32-byte CHK keys for both the release assets and their parent tree.
   const addOutput = run('htree', ['add', '--legacy-keys', stageDir], { capture: true, dryRun, env })
   const match = addOutput.match(/^\s*url:\s*(\S+)/m)
@@ -1234,7 +1237,10 @@ function publishRelease({ stageDir, releaseTree, tag, draft, dryRun, env = proce
   if (draft) {
     args.push('--draft')
   }
-  const publishOutput = run('htree', args, { capture: !dryRun, dryRun, env })
+  // The signed head goes to the always-on release-head provider (and its
+  // legacy relays); relays alone forget it within days.
+  const publishEnv = dryRun ? env : providerPublishEnv(env, provider)
+  const publishOutput = run('htree', args, { capture: !dryRun, dryRun, env: publishEnv })
   if (publishOutput) {
     console.log(publishOutput)
   }
@@ -1246,6 +1252,34 @@ function publishRelease({ stageDir, releaseTree, tag, draft, dryRun, env = proce
       ? String(env.IRIS_DRIVE_RELEASE_NPUB ?? 'npub1example').trim()
       : (npubMatch?.[1] ?? ''),
   }
+}
+
+// Fail before anything is published when the provider cannot take the head.
+function requireProviderReady({ env, dryRun }) {
+  if (dryRun) {
+    console.log(`Would publish the release head through the provider ${providerConfigDir(env)}`)
+    return null
+  }
+  const provider = releaseHeadProvider(env)
+  const status = JSON.parse(run('curl', ['--fail', '--silent', '--show-error', '--max-time', '10',
+    `${provider.baseUrl}/api/status`], { capture: true }))
+  if (status.nostr_event_transport !== 'fips-local-only') {
+    throw new Error(`Release-head provider ${provider.baseUrl} is not running with fips-local-only transport`)
+  }
+  console.log(`Release head goes through the provider ${provider.configDir}`)
+  return provider
+}
+
+function verifyProviderHead({ provider, npub, releaseTree, root, dryRun }) {
+  if (dryRun) {
+    console.log(`Would verify the provider serves the new ${releaseTree} root`)
+    return
+  }
+  const url = providerResolveUrl(provider, npub, releaseTree)
+  const resolved = JSON.parse(run('curl', ['--fail', '--silent', '--show-error', '--max-time', '20', url],
+    { capture: true }))
+  requireProviderHead(resolved, root, url)
+  console.log(`Release-head provider serves ${root}`)
 }
 
 function releaseResolverRefreshBaseUrls(env) {
@@ -1400,6 +1434,7 @@ async function main() {
 
   if (options.publish) {
     if (!options.draft && !options.dryRun) requireMeshRelease(meshGate)
+    const provider = requireProviderReady({ env: toolEnv, dryRun: options.dryRun })
     if (catalogReceipt) {
       const linuxCli = `idrive-${tag}-x86_64-unknown-linux-gnu.tar.gz`
       await verifyNativeCatalogArchive(catalogReceipt, join(stageDir, 'assets', linuxCli))
@@ -1416,10 +1451,12 @@ async function main() {
       draft: options.draft,
       dryRun: options.dryRun,
       env: toolEnv,
+      provider,
     })
     console.log(
       `Published ${options.draft ? 'draft ' : ''}${tag} to ${releaseTree} via ${published.cid}`,
     )
+    verifyProviderHead({ provider, npub: published.npub, releaseTree, root: published.root, dryRun: options.dryRun })
     if (!options.draft) {
       verifyPublishedMeshUpdate({ env, npub: published.npub, releaseTree, tag, root: published.root, dryRun: options.dryRun })
       refreshPublicReleaseResolvers({
