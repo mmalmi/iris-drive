@@ -12,7 +12,8 @@ export function selectMacosSigningIdentity({ requested, policyTeam, identities =
     throw new Error('Set release-policy.json macos.signingTeam to the 10-character Apple team ID')
   }
   const wanted = String(requested ?? '').trim()
-  if (dryRun && !wanted) return { hash: '', name: `Developer ID Application: (${team})`, team }
+  // Dry runs never read the keychain; they plan with the identity as given.
+  if (dryRun) return { hash: '', name: wanted || `Developer ID Application: (${team})`, team }
   if (!wanted) {
     throw new Error('Set IRIS_DRIVE_MACOS_SIGN_IDENTITY to the SHA-1 hash or full name of the Developer ID Application identity')
   }

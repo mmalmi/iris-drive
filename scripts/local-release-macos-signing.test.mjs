@@ -73,6 +73,11 @@ test('macOS signing refuses missing, ambiguous or non Developer ID identities', 
 
 test('dry runs describe the policy team without reading the keychain', () => {
   assert.equal(selectMacosSigningIdentity({ requested: '', policyTeam: '8G9P8AN75D', dryRun: true }).team, '8G9P8AN75D')
+  assert.deepEqual(
+    selectMacosSigningIdentity({ requested: '021AAE8875AEC52B083AF6EF0A4B591CA1837AE0', policyTeam: '8G9P8AN75D', identities: '', dryRun: true }),
+    { hash: '', name: '021AAE8875AEC52B083AF6EF0A4B591CA1837AE0', team: '8G9P8AN75D' },
+    'a pinned identity is planned as given, not matched against an empty keychain',
+  )
 })
 
 test('signed bundles must carry the policy team', () => {
