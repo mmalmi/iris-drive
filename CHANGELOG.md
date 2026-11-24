@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.51 - 2026-11-24
+
+- Prepares Iris Drive for Mac to move to Sirius Business Oy as its publisher.
+  This version can update to the first version published by Sirius Business Oy.
+  That version copies your Drive from this one once; macOS asks whether
+  Iris Drive may access data from other apps, and allowing it keeps you signed in.
+
 ## 0.1.50 - 2026-11-24
 
 - Keep recent Calendar edits when the same calendar is changed in the browser
