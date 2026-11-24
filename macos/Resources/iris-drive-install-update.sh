@@ -86,8 +86,14 @@ validate_file_provider_app() {
 
     current_team="$(signature_team_identifier "$current_app")"
     if [ -n "$current_team" ] && [ "$current_team" != "not set" ] && [ "$current_team" != "$app_team" ]; then
-        echo "iris-drive updater: downloaded app signing team differs from the installed app"
-        return 1
+        # Releases move once from Martti Malmi's team to Sirius Business Oy's.
+        # The new app copies its data from the previous team's app group.
+        if [ "$current_team" = "J8PPJKD7TA" ] && [ "$app_team" = "8G9P8AN75D" ]; then
+            echo "iris-drive updater: moving from signing team $current_team to $app_team"
+        else
+            echo "iris-drive updater: downloaded app signing team differs from the installed app"
+            return 1
+        fi
     fi
 }
 

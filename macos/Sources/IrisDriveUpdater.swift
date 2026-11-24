@@ -269,6 +269,7 @@ extension AppDelegate {
             "\(ProcessInfo.processInfo.processIdentifier)",
             configDirectory,
             logURL.path,
+            IrisDriveCodeSigning.currentTeamIdentifier() ?? "",
         ]
         return relaunch
     }
@@ -314,6 +315,7 @@ extension AppDelegate {
         old_pid="$2"
         config_dir="${3:-}"
         log_path="${4:-${TMPDIR:-/tmp}/iris-drive-install-update.log}"
+        previous_team="${5:-}"
 
         exec >>"$log_path" 2>&1
         echo "iris-drive updater: waiting to relaunch after pid $old_pid"
@@ -327,7 +329,11 @@ extension AppDelegate {
             exit 1
         fi
 
-        if [ -n "$config_dir" ] && [ -x "$current_app/Contents/MacOS/idrive" ]; then
+        installed_team="$(/usr/bin/codesign -dv --verbose=4 "$current_app" 2>&1 | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)"
+        if [ -n "$previous_team" ] && [ "$installed_team" != "$previous_team" ]; then
+            # The new signing team's app moves the Drive folder before starting the service.
+            echo "iris-drive updater: signing team changed; leaving the service to the updated app"
+        elif [ -n "$config_dir" ] && [ -x "$current_app/Contents/MacOS/idrive" ]; then
             "$current_app/Contents/MacOS/idrive" --config-dir "$config_dir" service start --json >/dev/null 2>&1 || true
         fi
 
