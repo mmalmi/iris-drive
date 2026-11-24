@@ -31,7 +31,7 @@ test('local macOS releases load primary settings before linked checkout and expl
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const linked = join(root, 'linked')
   git('worktree', 'add', '-q', '--detach', linked, 'HEAD')
-  writeFileSync(join(linked, 'release-policy.json'), '{"windows":{"signing":"unsigned"}}')
+  writeFileSync(join(linked, 'release-policy.json'), '{"windows":{"signing":"unsigned"},"macos":{"signingTeam":"TEAMID0001"}}')
   settings(root, 'dist/macos/provisioning.env', 'primary-build-output')
   checkNotaryProfile(linked, 'iris-drive-notary')
   settings(root, '.env.release.local', 'project')
@@ -56,7 +56,7 @@ test('local macOS releases load primary settings before linked checkout and expl
 test('local release still loads checkout settings in a non-Git dry run', t => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-env-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
-  writeFileSync(join(root, 'release-policy.json'), '{"windows":{"signing":"unsigned"}}')
+  writeFileSync(join(root, 'release-policy.json'), '{"windows":{"signing":"unsigned"},"macos":{"signingTeam":"TEAMID0001"}}')
   settings(root, 'dist/macos/provisioning.env', 'generated')
   settings(root, '.env.release.local', 'standalone')
   checkNotaryProfile(root, 'standalone')

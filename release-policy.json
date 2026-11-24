@@ -1,5 +1,8 @@
 {
   "windows": {
     "signing": "unsigned"
+  },
+  "macos": {
+    "signingTeam": "J8PPJKD7TA"
   }
 }
