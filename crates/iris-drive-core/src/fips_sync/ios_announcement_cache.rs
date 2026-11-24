@@ -62,6 +62,20 @@ mod tests {
         assert_eq!(snapshot_path(&legacy, private.path()).unwrap(), path);
         assert_eq!(std::fs::read(&path).unwrap(), old_snapshot);
         store.close().await;
-        writer.try_lock().unwrap();
+        // close() drops this process's only lock descriptor, but flock belongs
+        // to the open file description: a child that another test is spawning
+        // shares it until its exec. Closing must still release the lock.
+        let released_by = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            match writer.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock)
+                    if std::time::Instant::now() < released_by =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                Err(error) => panic!("closed peer cache kept its writer lock: {error:?}"),
+            }
+        }
     }
 }
