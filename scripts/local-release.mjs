@@ -51,9 +51,7 @@ import { readNativeCatalogReceipt, verifyNativeCatalogArchive } from './native-c
 import { macosReleaseSmokeCommand } from './macos-release-smoke-host.mjs'
 import { assertSignedTeam, selectMacosSigningIdentity } from './macos-signing-identity.mjs'
 import { releaseToolsEnv } from './release-tools.mjs'
-import {
-  providerConfigDir, providerPublishEnv, providerResolveUrl, releaseHeadProvider, requireProviderHead,
-} from './release-head-provider.mjs'
+import { providerPublishEnv, requireProviderReady, verifyProviderHead } from './release-head-provider.mjs'
 import { stageHostedProduct } from './stage-hosted-product.mjs'
 import { loadReleaseEnv } from './release-env.mjs'
 import {
@@ -1252,34 +1250,6 @@ function publishRelease({ stageDir, releaseTree, tag, draft, dryRun, env = proce
       ? String(env.IRIS_DRIVE_RELEASE_NPUB ?? 'npub1example').trim()
       : (npubMatch?.[1] ?? ''),
   }
-}
-
-// Fail before anything is published when the provider cannot take the head.
-function requireProviderReady({ env, dryRun }) {
-  if (dryRun) {
-    console.log(`Would publish the release head through the provider ${providerConfigDir(env)}`)
-    return null
-  }
-  const provider = releaseHeadProvider(env)
-  const status = JSON.parse(run('curl', ['--fail', '--silent', '--show-error', '--max-time', '10',
-    `${provider.baseUrl}/api/status`], { capture: true }))
-  if (status.nostr_event_transport !== 'fips-local-only') {
-    throw new Error(`Release-head provider ${provider.baseUrl} is not running with fips-local-only transport`)
-  }
-  console.log(`Release head goes through the provider ${provider.configDir}`)
-  return provider
-}
-
-function verifyProviderHead({ provider, npub, releaseTree, root, dryRun }) {
-  if (dryRun) {
-    console.log(`Would verify the provider serves the new ${releaseTree} root`)
-    return
-  }
-  const url = providerResolveUrl(provider, npub, releaseTree)
-  const resolved = JSON.parse(run('curl', ['--fail', '--silent', '--show-error', '--max-time', '20', url],
-    { capture: true }))
-  requireProviderHead(resolved, root, url)
-  console.log(`Release-head provider serves ${root}`)
 }
 
 function releaseResolverRefreshBaseUrls(env) {

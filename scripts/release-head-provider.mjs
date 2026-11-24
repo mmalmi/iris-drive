@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import os from 'node:os'
 import { join } from 'node:path'
@@ -47,4 +48,37 @@ export function requireProviderHead(resolved, root, url) {
   if (!root || resolved?.cid !== root) {
     throw new Error(`Release-head provider ${url} serves ${resolved?.cid || 'no release head'}, expected ${root || 'a published root'}`)
   }
+}
+
+function curlJson(url, seconds) {
+  console.log(`$ curl ${url}`)
+  const result = spawnSync('curl', ['--fail', '--silent', '--show-error', '--max-time', String(seconds), url],
+    { encoding: 'utf8' })
+  if (result.status !== 0) throw new Error(`curl ${url} failed: ${result.stderr.trim() || `exit ${result.status}`}`)
+  return JSON.parse(result.stdout)
+}
+
+// Fail before anything is published when the provider cannot take the head.
+export function requireProviderReady({ env, dryRun, getJson = curlJson }) {
+  if (dryRun) {
+    console.log(`Would publish the release head through the provider ${providerConfigDir(env)}`)
+    return null
+  }
+  const provider = releaseHeadProvider(env)
+  const status = getJson(`${provider.baseUrl}/api/status`, 10)
+  if (status.nostr_event_transport !== 'fips-local-only') {
+    throw new Error(`Release-head provider ${provider.baseUrl} is not running with fips-local-only transport`)
+  }
+  console.log(`Release head goes through the provider ${provider.configDir}`)
+  return provider
+}
+
+export function verifyProviderHead({ provider, npub, releaseTree, root, dryRun, getJson = curlJson }) {
+  if (dryRun) {
+    console.log(`Would verify the provider serves the new ${releaseTree} root`)
+    return
+  }
+  const url = providerResolveUrl(provider, npub, releaseTree)
+  requireProviderHead(getJson(url, 20), root, url)
+  console.log(`Release-head provider serves ${root}`)
 }

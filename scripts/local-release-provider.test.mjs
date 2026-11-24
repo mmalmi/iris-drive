@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { plannedReleaseAssetNames } from './local-release-lib.mjs'
 import {
   providerConfigEnv, providerPublishEnv, providerResolveUrl, releaseHeadProvider, requireProviderHead,
+  requireProviderReady, verifyProviderHead,
 } from './release-head-provider.mjs'
 
 function providerDir(t, config) {
@@ -73,4 +74,20 @@ test('final dry-run plans the head through the provider and its read-back', t =>
   assert.ok(publish > 0, result.stdout)
   assert.ok(result.stdout.indexOf('Would publish the release head through the provider /provider/config') < publish)
   assert.ok(result.stdout.indexOf('Would verify the provider serves the new releases/iris-drive root') > publish)
+})
+
+test('publishing needs a running FIPS provider that then serves the new root', t => {
+  const dir = providerDir(t, fipsConfig)
+  writeFileSync(join(dir, 'keys'), 'fixture')
+  const env = { [providerConfigEnv]: dir }
+  const status = transport => () => ({ nostr_event_transport: transport })
+  assert.throws(() => requireProviderReady({ env, getJson: status('relay') }), /not running with fips-local-only/)
+  const provider = requireProviderReady({ env, getJson: status('fips-local-only') })
+  assert.equal(provider.baseUrl, 'http://127.0.0.1:18088')
+  const head = { provider, npub: 'npub1x', releaseTree: 'releases/iris-drive', root: 'nhash1new' }
+  const urls = []
+  const serves = cid => url => (urls.push(url), { cid })
+  assert.throws(() => verifyProviderHead({ ...head, getJson: serves('nhash1old') }), /serves nhash1old, expected nhash1new/)
+  assert.doesNotThrow(() => verifyProviderHead({ ...head, getJson: serves('nhash1new') }))
+  assert.equal(urls[0], 'http://127.0.0.1:18088/api/nostr/resolve/npub1x/releases%2Firis-drive')
 })
