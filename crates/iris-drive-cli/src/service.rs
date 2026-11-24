@@ -129,6 +129,11 @@ fn stop_service(config_dir: &Path) -> Result<Value> {
     }
 }
 
+/// Stops and removes the background service that runs for `config_dir`.
+pub(crate) fn retire_service(config_dir: &Path) -> Result<()> {
+    uninstall_service(config_dir).map(|_| ())
+}
+
 fn uninstall_service(config_dir: &Path) -> Result<Value> {
     #[cfg(target_os = "macos")]
     {

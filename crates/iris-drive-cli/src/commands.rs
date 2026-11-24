@@ -127,6 +127,12 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: ServiceCmd,
     },
+    /// Move a previous install's Drive data into this app's data folder.
+    #[command(name = "app-data")]
+    AppData {
+        #[command(subcommand)]
+        command: AppDataCmd,
+    },
     /// Print compact GUI summary stats as JSON.
     Stats,
     /// Print how much of the Drive each of the profile's devices holds, as JSON.
@@ -269,6 +275,23 @@ pub(crate) enum Command {
         /// Mountpoint for --mount. Defaults to the configured/default drive path.
         #[arg(long)]
         mountpoint: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum AppDataCmd {
+    /// Copy the Drive data of an install signed by another team into this
+    /// folder once, after stopping that install's background service.
+    Adopt {
+        /// Previous "Iris Drive" data folder (holds Config/config.toml).
+        #[arg(long)]
+        from: PathBuf,
+        /// This app's "Iris Drive" data folder.
+        #[arg(long)]
+        to: PathBuf,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 

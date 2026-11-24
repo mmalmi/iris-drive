@@ -13,6 +13,26 @@ enum IrisDriveEnvironment {
     }
 }
 
+/// Releases moved once from Martti Malmi's signing team to Sirius Business Oy's.
+/// macOS gives each team its own app-group folder, so an app signed by the new
+/// team copies the previous team's Drive folder on first launch.
+enum IrisDriveSigningTeamMove {
+    static let previousTeam = "J8PPJKD7TA"
+
+    static func previousApplicationSupportDirectory(currentTeam: String?) -> URL? {
+        guard let team = currentTeam?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !team.isEmpty, team != previousTeam,
+              let home = getpwuid(getuid())?.pointee.pw_dir
+        else {
+            return nil
+        }
+        return URL(fileURLWithPath: String(cString: home), isDirectory: true)
+            .appendingPathComponent("Library/Group Containers", isDirectory: true)
+            .appendingPathComponent("\(previousTeam).to.iris.drive", isDirectory: true)
+            .appendingPathComponent("Iris Drive", isDirectory: true)
+    }
+}
+
 enum IrisDriveAppGroup {
     private static let appGroupName = "to.iris.drive"
     private static let legacyAppGroupIdentifier = "group.to.iris.drive"

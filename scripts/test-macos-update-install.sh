@@ -138,6 +138,37 @@ else
   printf 'MACOS_UPDATE_INSTALL_SIGNED_PATH_SKIPPED (no Developer ID identity)\n'
 fi
 
+# By hash: a certificate name can match several keychain entries.
+team_identity() {
+  security find-identity -v -p codesigning 2>/dev/null \
+    | awk -v team="($1)\"" '/"Developer ID Application:/ && index($0, team) { print $2; exit }'
+}
+PREVIOUS_TEAM_IDENTITY="$(team_identity J8PPJKD7TA)"
+NEXT_TEAM_IDENTITY="$(team_identity 8G9P8AN75D)"
+if [[ -n "$PREVIOUS_TEAM_IDENTITY" && -n "$NEXT_TEAM_IDENTITY" ]]; then
+  TEAM_CURRENT="$WORK_DIR/team/Applications/Iris Drive.app"
+  TEAM_NEW="$WORK_DIR/team/download/Iris Drive.app"
+  TEAM_LOG="$WORK_DIR/team.log"
+
+  make_developer_id_app "$TEAM_CURRENT" "next-team" "$NEXT_TEAM_IDENTITY" yes
+  make_developer_id_app "$TEAM_NEW" "previous-team" "$PREVIOUS_TEAM_IDENTITY" yes
+  if /bin/sh "$INSTALL_HELPER" "$TEAM_CURRENT" "$TEAM_NEW" "$TEAM_LOG"; then
+    printf 'installer unexpectedly moved an install back to the previous signing team\n' >&2
+    exit 1
+  fi
+  [[ "$(cat "$TEAM_CURRENT/Contents/Resources/version-marker")" == "next-team" ]]
+  grep -Fq "iris-drive updater: downloaded app signing team differs from the installed app" "$TEAM_LOG"
+
+  rm -rf "$TEAM_CURRENT" "$TEAM_NEW"
+  make_developer_id_app "$TEAM_CURRENT" "previous-team" "$PREVIOUS_TEAM_IDENTITY" yes
+  make_developer_id_app "$TEAM_NEW" "next-team" "$NEXT_TEAM_IDENTITY" yes
+  /bin/sh "$INSTALL_HELPER" "$TEAM_CURRENT" "$TEAM_NEW" "$TEAM_LOG"
+  [[ "$(cat "$TEAM_CURRENT/Contents/Resources/version-marker")" == "next-team" ]]
+  grep -Fq "iris-drive updater: moving from signing team J8PPJKD7TA to 8G9P8AN75D" "$TEAM_LOG"
+else
+  printf 'MACOS_UPDATE_TEAM_CHANGE_SKIPPED (needs Developer ID identities for J8PPJKD7TA and 8G9P8AN75D)\n'
+fi
+
 if /bin/sh "$INSTALL_HELPER" \
     "$CURRENT_APP" \
     "$WORK_DIR/missing/Iris Drive.app" \

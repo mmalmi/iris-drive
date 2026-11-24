@@ -30,6 +30,7 @@ use nostr_sdk::{Event, JsonUtil, RelayStatus};
 use serde::Serialize;
 use serde_json::{Value, json};
 
+mod app_data;
 mod app_key_link;
 mod backups;
 mod commands;
@@ -171,6 +172,7 @@ fn run_cli() -> ExitCode {
         Command::RotateDck => cmd_rotate_dck(&config_dir),
         Command::Status => cmd_status(&config_dir),
         Command::Service { command } => cmd_service(&config_dir, command),
+        Command::AppData { command } => app_data::cmd_app_data(command),
         Command::Stats => cmd_stats(&config_dir),
         Command::Storage => cmd_storage(&config_dir),
         Command::Shares { command } => cmd_shares(&config_dir, command),

@@ -1300,6 +1300,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let paths = runtimePaths()
         NSLog("Iris Drive runtime paths config=\(paths.configDirectory.path)")
         runtimePathsForMenu = paths
+        guard localProfileExists(paths: paths) || adoptPreviousTeamDrive(idrive, paths: paths) else {
+            return
+        }
         do {
             try ensureDirectory(paths.configDirectory)
             if !localProfileExists(paths: paths) {
@@ -1319,6 +1322,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("Iris Drive daemon bootstrap failed: \(error)")
             markStartupStateLoaded()
             updateStatus("Sync failed")
+        }
+    }
+
+    /// Copies the Drive of the previous signing team's app once. Reading it makes
+    /// macOS ask whether Iris Drive may access data from other apps, so the copy
+    /// waits for that answer. Without the copy this install would start empty.
+    private func adoptPreviousTeamDrive(_ idrive: URL?, paths: IrisDriveRuntimePaths) -> Bool {
+        let customBase = ProcessInfo.processInfo.environment["IRIS_DRIVE_APP_BASE_DIR"] ?? ""
+        guard customBase.isEmpty,
+              let previous = IrisDriveSigningTeamMove.previousApplicationSupportDirectory(
+                  currentTeam: currentProcessTeamIdentifier()
+              )
+        else {
+            return true
+        }
+        updateStatus("Moving your Drive to this version. Allow access if macOS asks.")
+        do {
+            let data = try runIDrive(
+                idrive,
+                arguments: [
+                    "app-data", "adopt",
+                    "--from", previous.path,
+                    "--to", paths.configDirectory.deletingLastPathComponent().path,
+                    "--json",
+                ],
+                paths: paths,
+                timeout: 600
+            )
+            irisDriveDebugLog("Iris Drive previous signing team data: \(String(decoding: data, as: UTF8.self))")
+            return true
+        } catch {
+            NSLog("Iris Drive could not move the previous Drive data: \(error)")
+            updateStatus(
+                "Iris Drive needs access to its data from the previous version. " +
+                "Allow it in System Settings › Privacy & Security, then reopen Iris Drive."
+            )
+            return false
         }
     }
 
@@ -1758,7 +1798,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func runIDrive(
         _ idrive: URL?,
         arguments: [String],
-        paths: IrisDriveRuntimePaths
+        paths: IrisDriveRuntimePaths,
+        timeout: TimeInterval = 15
     ) throws -> Data {
         let process = Process()
         configure(process, executable: idrive, arguments: arguments, paths: paths)
@@ -1783,7 +1824,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         try process.run()
-        let deadline = Date().addingTimeInterval(15)
+        let deadline = Date().addingTimeInterval(timeout)
         while process.isRunning && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.05)
         }
