@@ -10,5 +10,6 @@ mod drive_feed;
 mod mesh_fallback;
 mod peer_announcements;
 mod peer_refresh;
+mod release_head_replay;
 
 mod settings;

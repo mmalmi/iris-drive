@@ -183,6 +183,44 @@ async fn update_route_leases_preserve_peer_changes_and_release_capacity() {
     endpoint.shutdown().await.unwrap();
 }
 
+#[tokio::test]
+async fn standalone_check_reports_a_missing_mesh_link_apart_from_a_quiet_window() {
+    let lonely_endpoint = endpoint(Vec::new()).await;
+    let lonely =
+        FipsPubsubClient::start(lonely_endpoint.clone(), FipsPubsubClientOptions::default())
+            .await
+            .unwrap();
+    let error = wait_for_pubsub_peer(&lonely, Duration::from_millis(300))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("no FIPS pubsub peer connected"), "{error}");
+
+    let peer_endpoint = endpoint(Vec::new()).await;
+    let peer = FipsPubsubClient::start(peer_endpoint.clone(), FipsPubsubClientOptions::default())
+        .await
+        .unwrap();
+    let address = peer_endpoint.bound_udp_listen_addrs().await.unwrap()[0].to_string();
+    let reader_endpoint =
+        endpoint(vec![PeerConfig::new(peer_endpoint.npub(), "udp", &address)]).await;
+    let reader =
+        FipsPubsubClient::start(reader_endpoint.clone(), FipsPubsubClientOptions::default())
+            .await
+            .unwrap();
+    // The window may start only once this link can carry the subscription.
+    wait_for_pubsub_peer(&reader, Duration::from_secs(10))
+        .await
+        .unwrap();
+    assert!(reader.connected_peer_count().unwrap() > 0);
+
+    for client in [lonely, peer, reader] {
+        client.shutdown().await;
+    }
+    for endpoint in [lonely_endpoint, peer_endpoint, reader_endpoint] {
+        endpoint.shutdown().await.unwrap();
+    }
+}
+
 fn release(keys: &Keys, created_at: u64, byte: u8) -> Event {
     EventBuilder::new(Kind::Custom(30_064), "")
         .tags([
@@ -268,10 +306,7 @@ async fn shared_fips_provider_refreshes_cached_release_and_fails_offline() {
     })
     .await
     .unwrap();
-    let UpdatePubsub {
-        _connections: connections,
-        ..
-    } = provider.as_ref();
+    let UpdatePubsub { connections, .. } = provider.as_ref();
     assert!(
         connections.owned_fips.is_none(),
         "must reuse the app endpoint"

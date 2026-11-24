@@ -18,6 +18,7 @@ use nostr_sdk::Event;
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
+use super::replay_store::{DriveReplaySource, ReleaseHeads};
 use super::{FipsBlockSync, FipsSyncError};
 
 const DELIVERY_CAPACITY: usize = 256;
@@ -46,6 +47,7 @@ pub struct FipsNostrPubsubEvent {
 pub(super) struct DriveNostrPubsubRuntime {
     client: Option<Arc<FipsPubsubClient>>,
     announcement_store: Option<Arc<FileEventBus>>,
+    release_heads: Option<Arc<ReleaseHeads>>,
     update_routes: Arc<crate::updater::pubsub::UpdateRoutes>,
     deliveries: broadcast::Sender<FipsNostrPubsubEvent>,
     receiver_task: Option<JoinHandle<()>>,
@@ -126,6 +128,7 @@ impl DriveNostrPubsubRuntime {
             Some(directory) => Some(open_announcement_store(directory, &endpoint).await?),
             None => None,
         };
+        let release_heads = ReleaseHeads::for_subscriptions(&filters).map(Arc::new);
         let client = Arc::new(
             FipsPubsubClient::start_with_reputation(
                 endpoint.clone(),
@@ -147,14 +150,30 @@ impl DriveNostrPubsubRuntime {
             .await
             .map_err(|error| endpoint_error(error.to_string()))?,
         );
-        if let Some(store) = &announcement_store
-            && let Err(error) = client
-                .set_peer_announcement_store(Some(store.clone()))
-                .await
-                .and_then(|()| client.set_replay_source(Some(store.clone())))
-        {
+        let stores = match &announcement_store {
+            Some(store) => {
+                client
+                    .set_peer_announcement_store(Some(store.clone()))
+                    .await
+            }
+            None => Ok(()),
+        }
+        .and_then(|()| {
+            if announcement_store.is_none() && release_heads.is_none() {
+                return Ok(());
+            }
+            // Peers asking for history get it from these stores once the
+            // bounded live cache no longer holds it.
+            client.set_replay_source(Some(Arc::new(DriveReplaySource {
+                announcements: announcement_store.clone(),
+                release_heads: release_heads.clone(),
+            })))
+        });
+        if let Err(error) = stores {
             client.shutdown_shared().await;
-            store.close().await;
+            if let Some(store) = &announcement_store {
+                store.close().await;
+            }
             return Err(endpoint_error(error.to_string()));
         }
         let update_routes = crate::updater::pubsub::UpdateRoutes::new(&client);
@@ -228,6 +247,7 @@ impl DriveNostrPubsubRuntime {
         Ok(Self {
             client: Some(client),
             announcement_store,
+            release_heads,
             update_routes,
             deliveries,
             receiver_task: Some(receiver_task),
@@ -282,6 +302,10 @@ impl DriveNostrPubsubRuntime {
         let Some(client) = self.client.as_ref() else {
             return Err(endpoint_error("Drive Nostr pubsub runtime is closed"));
         };
+        // The update exchange publishes only release heads it verified.
+        if let Some(heads) = &self.release_heads {
+            heads.retain(&event);
+        }
         let peers = client
             .connected_peer_count()
             .map_err(|error| endpoint_error(error.to_string()))?;

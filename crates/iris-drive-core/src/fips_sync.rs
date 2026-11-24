@@ -41,6 +41,7 @@ mod peer_refresh;
 mod presence;
 pub use presence::FipsPeerPresence;
 mod recent_peer_cache;
+mod replay_store;
 pub(crate) mod settings_runtime;
 #[cfg(feature = "stack-fixture")]
 mod stack_fixture_traffic;

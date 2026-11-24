@@ -29,6 +29,8 @@ use progress::{UpdateProgress, UpdateStage, report_update_progress, update_progr
 pub const HTREE_UPDATE_REF: &str = "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-drive/latest";
 
 const UPDATE_CONNECT_TIMEOUT_SECS: u64 = 4;
+/// A standalone check dials public seeds before any peer can answer.
+const UPDATE_MESH_JOIN_TIMEOUT_SECS: u64 = 15;
 const UPDATE_MANIFEST_TIMEOUT_SECS: u64 = 8;
 const UPDATE_DOWNLOAD_TIMEOUT_SECS: u64 = 180;
 const DEFAULT_UPDATE_BLOSSOM_READ_SERVERS: &[&str] = &[
@@ -243,6 +245,9 @@ async fn build_secure_updater(
     )
     .await
     .context("starting update pubsub transport timed out")??;
+    provider
+        .wait_for_mesh_peer(Duration::from_secs(UPDATE_MESH_JOIN_TIMEOUT_SECS))
+        .await?;
     let (primary, peers) = match pubsub::storage(config.config_dir.as_deref()) {
         Some((store, route)) => (store, Some(route)),
         None => (

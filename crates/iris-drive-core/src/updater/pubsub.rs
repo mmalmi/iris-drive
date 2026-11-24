@@ -3,6 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
@@ -97,7 +98,7 @@ pub(crate) fn register_routed(
 /// endpoint. Dropping the resolver also releases a cancelled check's resources.
 pub(super) struct UpdatePubsub {
     provider: Arc<dyn NostrEventSubscriber>,
-    _connections: UpdateConnections,
+    connections: UpdateConnections,
 }
 
 struct UpdateConnections {
@@ -130,7 +131,7 @@ impl UpdatePubsub {
             .await?;
             return Ok(Arc::new(Self {
                 provider: Arc::new(relay.clone()),
-                _connections: UpdateConnections {
+                connections: UpdateConnections {
                     owned_fips: None,
                     relay: Some(relay),
                     _route_lease: None,
@@ -205,13 +206,42 @@ impl UpdatePubsub {
         };
         Ok(Arc::new(Self {
             provider: Arc::new(client.fresh_subscriber()),
-            _connections: UpdateConnections {
+            connections: UpdateConnections {
                 owned_fips,
                 relay: None,
                 _route_lease: route_lease,
             },
         }))
     }
+}
+
+impl UpdatePubsub {
+    /// A standalone check owns a cold endpoint that is still dialling seeds.
+    /// Start its observation window once a pubsub peer can answer; the app's
+    /// shared client is already on the mesh.
+    pub(super) async fn wait_for_mesh_peer(&self, timeout: Duration) -> Result<()> {
+        match &self.connections.owned_fips {
+            Some((client, _)) => wait_for_pubsub_peer(client, timeout).await,
+            None => Ok(()),
+        }
+    }
+}
+
+const MESH_JOIN_POLL: Duration = Duration::from_millis(100);
+
+/// Waiting for a link is not a peer observation: report it as its own error.
+pub(super) async fn wait_for_pubsub_peer(
+    client: &FipsPubsubClient,
+    timeout: Duration,
+) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    while client.connected_peer_count()? == 0 {
+        if tokio::time::Instant::now() >= deadline {
+            bail!("Update check inconclusive: no FIPS pubsub peer connected within {timeout:?}");
+        }
+        tokio::time::sleep(MESH_JOIN_POLL).await;
+    }
+    Ok(())
 }
 
 #[async_trait]
