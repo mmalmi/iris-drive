@@ -157,11 +157,24 @@ fn copy_tree(from: &Path, to: &Path) -> Result<u64> {
             fs::copy(&source, &target).with_context(|| format!("copying {}", source.display()))?;
             files += 1;
         } else if kind.is_symlink() {
-            std::os::unix::fs::symlink(fs::read_link(&source)?, &target)?;
+            copy_symlink(&source, &target)?;
         }
     }
     Ok(files)
 }
 
-#[cfg(test)]
+#[cfg(unix)]
+fn copy_symlink(source: &Path, target: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(fs::read_link(source)?, target)
+        .with_context(|| format!("copying link {}", source.display()))
+}
+
+/// Only the macOS app adopts a previous team's folder; elsewhere a link in
+/// Drive data is unexpected, so say so instead of dropping it.
+#[cfg(not(unix))]
+fn copy_symlink(source: &Path, _target: &Path) -> Result<()> {
+    anyhow::bail!("cannot copy link {} on this platform", source.display())
+}
+
+#[cfg(all(test, unix))]
 mod tests;
