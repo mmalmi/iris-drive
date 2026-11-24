@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.52 - 2026-11-25
+
+- Iris Drive for Mac is now published by Sirius Business Oy. After updating,
+  macOS asks a few questions once: choose Open Anyway when it says Iris Drive
+  differs from previously opened versions, and Allow when Iris Drive would like
+  to access data from other apps. Your Drive is copied from the previous version,
+  so you stay signed in with the same files. Macs on 0.1.50 or older need to
+  download this version once by hand.
+- Files listed in Drive open on Android and iPhone even when their contents have
+  not synced yet; opening a file downloads it first.
+
 ## 0.1.51 - 2026-11-24
 
 - Prepares Iris Drive for Mac to move to Sirius Business Oy as its publisher.
