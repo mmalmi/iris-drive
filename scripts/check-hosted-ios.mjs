@@ -41,7 +41,15 @@ if (!device) throw new Error('Hosted runner has no iOS26.2 iPhone simulator')
 env = { ...env, IRIS_DRIVE_IDRIVE_BIN: cli, IRIS_DRIVE_IOS_SIMULATOR_DEVICE: device.udid,
   IRIS_DRIVE_IOS_UI_BUILD_LOG: join(output, 'xcode-tests.log'),
   IRIS_DRIVE_PREPARED_IOS_DERIVED_DATA: debug }
-run('bash', [join(output, 'ios-gui-linking-smoke.sh')], { timeout: 40 * 60 * 1000 })
+// One 40-minute budget covers simulator boot and the GUI journey. Boot first so
+// a slow (cold) runner shows where the budget went before any timeout.
+const guiBudgetMs = 40 * 60 * 1000
+const guiStarted = Date.now()
+spawnSync('xcrun', ['simctl', 'boot', device.udid], { stdio: 'inherit' })
+run('xcrun', ['simctl', 'bootstatus', device.udid, '-b'], { timeout: guiBudgetMs })
+console.log(`HOSTED_IOS_PHASE name=simulator-boot seconds=${((Date.now() - guiStarted) / 1000).toFixed(1)}`)
+run('bash', [join(output, 'ios-gui-linking-smoke.sh')], { timeout: Math.max(1, guiBudgetMs - (Date.now() - guiStarted)) })
+console.log(`HOSTED_IOS_PHASE name=gui-linking seconds=${((Date.now() - guiStarted) / 1000).toFixed(1)}`)
 run('xcrun', ['simctl', 'io', device.udid, 'screenshot', join(output, 'gui.png')])
 run('bash', [join(output, 'ios-simulator-smoke.sh'), '--no-build'], { timeout: 15 * 60 * 1000 })
 env = { ...env, IRIS_DRIVE_IOS_XCODE_CONFIGURATION: 'Release',
