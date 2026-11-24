@@ -49,6 +49,7 @@ import { assertZipEntriesEqualFiles } from './release-zip.mjs'
 import { requireMeshRelease } from './mesh-release-gate.mjs'
 import { readNativeCatalogReceipt, verifyNativeCatalogArchive } from './native-catalog-release.mjs'
 import { macosReleaseSmokeCommand } from './macos-release-smoke-host.mjs'
+import { assertSignedTeam, selectMacosSigningIdentity } from './macos-signing-identity.mjs'
 import { releaseToolsEnv } from './release-tools.mjs'
 import { stageHostedProduct } from './stage-hosted-product.mjs'
 import { loadReleaseEnv } from './release-env.mjs'
@@ -291,42 +292,6 @@ function stageLinuxDebCliBinary({ env, targetTriple, dryRun }) {
   mkdirSync(releaseDir, { recursive: true })
   copyFileSync(sourcePath, destPath)
   chmodSync(destPath, 0o755)
-}
-
-function macosDeveloperIdIdentity(env, dryRun) {
-  const requested = String(env.IRIS_DRIVE_MACOS_SIGN_IDENTITY ?? '').trim()
-  if (requested) {
-    return requested
-  }
-  if (dryRun) {
-    return 'Developer ID Application: Example (TEAMID)'
-  }
-  const identities = run('security', ['find-identity', '-v', '-p', 'codesigning'], {
-    capture: true,
-  })
-  const match = identities.match(/"([^"]*Developer ID Application[^"]*)"/)
-  return match?.[1] ?? ''
-}
-
-function macosTeamIdentifier(identity, env, dryRun) {
-  const direct = String(env.IRIS_DRIVE_MACOS_TEAM_ID ?? '').trim()
-  if (direct) {
-    return direct
-  }
-  const parenthesized = identity.match(/\(([A-Z0-9]+)\)\s*$/)
-  if (parenthesized) {
-    return parenthesized[1]
-  }
-  if (dryRun) {
-    return 'TEAMID'
-  }
-  const certPem = run('security', ['find-certificate', '-c', identity, '-p'], { capture: true })
-  const subject = run('openssl', ['x509', '-noout', '-subject', '-nameopt', 'RFC2253'], {
-    capture: true,
-    input: certPem,
-  })
-  const match = subject.match(/(?:^|,)OU=([^,]+)/)
-  return match?.[1] ?? ''
 }
 
 function macosCodesignTimestampArgs(env) {
@@ -653,14 +618,15 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     repoRoot,
     run,
   })
-  const identity = macosDeveloperIdIdentity(env, dryRun)
-  if (!identity) {
-    throw new Error('Missing Developer ID Application identity for macOS release signing.')
-  }
-  const teamId = macosTeamIdentifier(identity, env, dryRun)
-  if (!teamId) {
-    throw new Error(`Could not resolve Team ID for macOS signing identity: ${identity}`)
-  }
+  const signing = selectMacosSigningIdentity({
+    requested: env.IRIS_DRIVE_MACOS_SIGN_IDENTITY,
+    policyTeam: readProjectReleasePolicy().macos?.signingTeam,
+    identities: dryRun ? '' : run('security', ['find-identity', '-v', '-p', 'codesigning'], { capture: true }),
+    dryRun,
+  })
+  const identity = signing.hash || signing.name
+  const teamId = signing.team
+  console.log(`macOS signing identity: ${signing.name}`)
   const keepProvisionedEntitlements = macosProvisionedEntitlementsEnabled(env)
   const appProvisioningProfile = macosProvisioningProfilePath(
     env,
@@ -747,6 +713,13 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     { dryRun, env },
   )
   run('codesign', ['--verify', '--deep', '--strict', appPath], { dryRun })
+  if (!dryRun) {
+    for (const [label, path] of [['Iris Drive.app', appPath], ['File Provider', appexPath],
+      ['app idrive', appCliPath], ['File Provider idrive', appexCliPath]]) {
+      if (path === appexPath && !existsSync(appexPath)) continue
+      assertSignedTeam(spawnSync('codesign', ['-dv', '--verbose=4', path], { encoding: 'utf8' }).stderr, teamId, label)
+    }
+  }
   notarizeMacosApp({ appPath, signingDir, env, dryRun })
 
   const dmgPath = join(distDir, `iris-drive-${tag}-macos-arm64.dmg`)
