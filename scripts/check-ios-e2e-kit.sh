@@ -279,68 +279,67 @@ if initial_mobile_local_relay > awaiting_approval_ui:
         "the initial iOS linked profile must use the local relay before XCTest teardown"
     )
 
-observer_function = source.index("start_linked_device_sync_observer()")
+keepalive_function = source.index("keep_owner_exchange_running() {")
+keepalive_pending = source.index(
+    'owner_has_pending_receipt "$owner_config_dir" "$expected_owner_roster" pending',
+    keepalive_function,
+)
+keepalive_launch = source.index(
+    'xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID"', keepalive_pending
+)
+observer_function = source.index("start_linked_device_sync_observer() {")
 observer_assertion = source.index(
-    "assert_linked_device_exchange_observed_before()", observer_function
+    "assert_linked_device_exchange_observed_before() {", observer_function
 )
-linked_authorized_branch = source.index(
-    'if [[ -s "$linked_observation_file" ]]; then', observer_function, observer_assertion
-)
-linked_sync = source.index(
-    '"$IDRIVE" --config-dir "$linked_config_dir" sync',
+linked_daemon = source.index(
+    '"$IDRIVE" --config-dir "$linked_config_dir" daemon',
     observer_function,
-    linked_authorized_branch,
-)
-local_relay_override = source.index(
-    '--relay "$LOCAL_RELAY_URL" --timeout 2',
-    linked_sync,
-    linked_authorized_branch,
-)
-owner_pending_status = source.index(
-    '"$IDRIVE" --config-dir "$owner_config_dir" status',
-    local_relay_override,
-    linked_authorized_branch,
-)
-owner_receipt_keepalive = source.index(
-    'xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID"',
-    owner_pending_status,
-    linked_authorized_branch,
-)
-linked_status = source.index(
-    '"$IDRIVE" --config-dir "$linked_config_dir" status',
-    owner_receipt_keepalive,
-    linked_authorized_branch,
-)
-owner_ack_keepalive = source.index(
-    'xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID"',
-    linked_authorized_branch,
     observer_assertion,
 )
+local_relay_daemon = source.index(
+    '--relay "$LOCAL_RELAY_URL" --watch-interval 0 --no-gateway',
+    linked_daemon,
+    observer_assertion,
+)
+background_keepalive = source.index(
+    "keep_owner_exchange_running", local_relay_daemon, observer_assertion
+)
+observation_loop = source.index("while before_deadline", background_keepalive, observer_assertion)
+linked_status = source.index(
+    'linked_device_is_authorized "$linked_config_dir"', observation_loop, observer_assertion
+)
 owner_ack_status = source.index(
-    '"$IDRIVE" --config-dir "$owner_config_dir" status',
-    owner_ack_keepalive,
+    'owner_has_pending_receipt "$owner_config_dir" "$expected_owner_roster" consumed',
+    linked_status,
     observer_assertion,
 )
 product_ack_poll = source.index(
     'product_ack_persisted_at="$(approval_receipt_consumed_at',
     observer_assertion,
 )
+observer_body = source[observer_function:observer_assertion]
+if "xcrun simctl" in observer_body or '"$linked_config_dir" sync' in observer_body:
+    raise SystemExit(
+        "the approval observation loop must not relaunch the owner or poll one-shot syncs; "
+        "a blocked relaunch delayed linked-device sync past the 15-second deadline"
+    )
 if not (
-    linked_sync
-    < local_relay_override
-    < owner_pending_status
-    < owner_receipt_keepalive
+    keepalive_function < keepalive_pending < keepalive_launch < observer_function
+    and source[background_keepalive:observation_loop].count("&") >= 1
+    and observer_function
+    < linked_daemon
+    < local_relay_daemon
+    < background_keepalive
+    < observation_loop
     < linked_status
-    < linked_authorized_branch
-    < owner_ack_keepalive
     < owner_ack_status
     < observer_assertion
     < product_ack_poll
 ):
     raise SystemExit(
-        "linked CLI observer must sync only against the deterministic local relay, "
-        "keep the iOS owner alive after a durable pending receipt, then observe real "
-        "mobile approval publication and ACK ingestion"
+        "linked CLI observer must run the linked device as a daemon on the deterministic "
+        "local relay, keep the iOS owner alive only while a durable receipt is pending, "
+        "then observe real mobile approval publication and ACK ingestion"
     )
 
 

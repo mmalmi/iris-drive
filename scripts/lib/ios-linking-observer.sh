@@ -72,6 +72,36 @@ else:
 PY
 }
 
+owner_has_pending_receipt() {
+  local owner_config_dir="$1" expected_owner_roster="$2" pending_check="$3"
+  "$IDRIVE" --config-dir "$owner_config_dir" status 2>/dev/null \
+    | python3 -c 'import json,sys; p=json.load(sys.stdin).get("profile") or {}; pending=int(p.get("pending_device_approval_receipt_count") or 0); ok=int(p.get("roster_size") or 0) == int(sys.argv[1]) and (pending > 0 if sys.argv[2] == "pending" else pending == 0); raise SystemExit(0 if ok else 1)' \
+      "$expected_owner_roster" "$pending_check" >/dev/null 2>&1
+}
+
+linked_device_is_authorized() {
+  "$IDRIVE" --config-dir "$1" status 2>/dev/null \
+    | python3 -c 'import json,sys; p=(json.load(sys.stdin).get("profile") or {}); raise SystemExit(0 if p.get("authorization_state") == "authorized" else 1)' >/dev/null 2>&1
+}
+
+# XCTest can terminate the owner as soon as its locally linked row is visible,
+# before the native exchange has ingested the linked device's ACK. While that
+# exact persisted state exists, keep the real iOS product exchange alive; never
+# mutate or sync the owner from the host. `simctl launch` blocks until XCTest
+# releases the app, so it runs apart from the linked device and its observation.
+keep_owner_exchange_running() {
+  local owner_config_dir="$1" expected_owner_roster="$2" timeline="$3" started_at
+  trap 'exit 0' TERM
+  while :; do
+    if owner_has_pending_receipt "$owner_config_dir" "$expected_owner_roster" pending; then
+      started_at="$(python3 -c 'import time; print(time.time())')"
+      xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+      printf '%s %s\n' "$started_at" "$(python3 -c 'import time; print(time.time())')" >>"$timeline"
+    fi
+    sleep 0.2
+  done
+}
+
 start_linked_device_sync_observer() {
   local linked_config_dir="$1"
   local owner_config_dir="$2"
@@ -84,42 +114,90 @@ start_linked_device_sync_observer() {
   echo "IOS_APPROVAL_OBSERVER_STARTED at=$observer_started_at startup_deadline=$((observer_started_at + 180))"
   : >"$linked_observation_file"
   : >"$ack_observation_file"
+  : >"$linked_config_dir/approval-observer-daemon.log"
+  : >"$linked_config_dir/approval-observer-owner-relaunch.log"
   (
+    linked_daemon_pid=""
+    owner_relaunch_pid=""
+    stop_linked_device_observer_children() {
+      local pid
+      for pid in "$linked_daemon_pid" "$owner_relaunch_pid"; do
+        [[ -z "$pid" ]] || kill "$pid" >/dev/null 2>&1 || true
+      done
+      for pid in "$linked_daemon_pid" "$owner_relaunch_pid"; do
+        [[ -z "$pid" ]] || wait "$pid" >/dev/null 2>&1 || true
+      done
+    }
+    trap stop_linked_device_observer_children EXIT
+    trap 'exit 143' TERM
+    # The linked CLI device runs as the product does while awaiting approval: a
+    # daemon holding its relay subscriptions open. A one-shot sync loop missed
+    # approvals that landed between polls while the owner relaunch blocked it.
+    IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0 \
+      IRIS_DRIVE_FIPS_UDP_PUBLIC=false \
+      IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false \
+      IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false \
+      "$IDRIVE" --config-dir "$linked_config_dir" daemon \
+      --relay "$LOCAL_RELAY_URL" --watch-interval 0 --no-gateway \
+      >"$linked_config_dir/approval-observer-daemon.log" 2>&1 &
+    linked_daemon_pid="$!"
+    keep_owner_exchange_running "$owner_config_dir" "$expected_owner_roster" \
+      "$linked_config_dir/approval-observer-owner-relaunch.log" &
+    owner_relaunch_pid="$!"
     while before_deadline "$(linked_device_observer_deadline "$observer_started_at" "$STATE_FILE")"; do
-      if [[ ! -s "$linked_observation_file" ]]; then
-        "$IDRIVE" --config-dir "$linked_config_dir" sync \
-          --relay "$LOCAL_RELAY_URL" --timeout 2 >/dev/null 2>&1 || true
-        # XCTest can terminate the owner as soon as its locally linked row is
-        # visible, before the native exchange publishes the durable approval
-        # receipt. Once that exact persisted state exists, keep the real iOS
-        # product exchange alive; never mutate or sync the owner from the host.
-        if "$IDRIVE" --config-dir "$owner_config_dir" status 2>/dev/null \
-          | python3 -c 'import json,sys; p=json.load(sys.stdin).get("profile") or {}; raise SystemExit(0 if int(p.get("roster_size") or 0) == int(sys.argv[1]) and int(p.get("pending_device_approval_receipt_count") or 0) > 0 else 1)' \
-            "$expected_owner_roster" >/dev/null 2>&1; then
-          xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
-        fi
-        if "$IDRIVE" --config-dir "$linked_config_dir" status 2>/dev/null \
-          | python3 -c 'import json,sys; p=(json.load(sys.stdin).get("profile") or {}); raise SystemExit(0 if p.get("authorization_state") == "authorized" else 1)' >/dev/null 2>&1; then
-          python3 -c 'import time; print(time.time())' >"$linked_observation_file"
-        fi
+      if [[ ! -s "$linked_observation_file" ]] && linked_device_is_authorized "$linked_config_dir"; then
+        python3 -c 'import time; print(time.time())' >"$linked_observation_file"
       fi
-      if [[ -s "$linked_observation_file" ]]; then
-        # XCTest may terminate the owner immediately after the approval UI
-        # returns. Launching an already-running app is non-destructive, while
-        # repeating it during teardown keeps mobile ACK ingestion alive.
-        xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
-        if "$IDRIVE" --config-dir "$owner_config_dir" status 2>/dev/null \
-          | python3 -c 'import json,sys; p=json.load(sys.stdin).get("profile") or {}; raise SystemExit(0 if int(p.get("roster_size") or 0) == int(sys.argv[1]) and int(p.get("pending_device_approval_receipt_count") or 0) == 0 else 1)' \
-            "$expected_owner_roster" >/dev/null 2>&1; then
-          python3 -c 'import time; print(time.time())' >"$ack_observation_file"
-          exit 0
-        fi
+      if [[ -s "$linked_observation_file" ]] \
+        && owner_has_pending_receipt "$owner_config_dir" "$expected_owner_roster" consumed; then
+        python3 -c 'import time; print(time.time())' >"$ack_observation_file"
+        exit 0
+      fi
+      if ! kill -0 "$linked_daemon_pid" >/dev/null 2>&1; then
+        echo "FAIL: linked CLI daemon for $linked_config_dir exited during approval observation." >&2
+        exit 1
       fi
       sleep 0.2
     done
     exit 1
   ) &
   printf -v "$pid_variable" '%s' "$!"
+  printf -v "IOS_LINKED_OBSERVER_CONFIG_DIR_$!" '%s' "$linked_config_dir"
+}
+
+print_linked_device_observer_diagnostics() {
+  local observer_pid="$1" phase="$2" config_variable linked_config_dir
+  config_variable="IOS_LINKED_OBSERVER_CONFIG_DIR_$observer_pid"
+  linked_config_dir="${!config_variable:-}"
+  [[ -n "$linked_config_dir" ]] || return 0
+  python3 - "$linked_config_dir/approval-observer-daemon.log" \
+    "$linked_config_dir/approval-observer-owner-relaunch.log" "$phase" <<'PY'
+import json, os, sys
+events = []
+if os.path.exists(sys.argv[1]):
+    for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("event") in (None, "fips_status"):
+            continue
+        events.append({key: event.get(key) for key in (
+            "event", "event_id", "outcome", "error", "updated_at",
+        ) if event.get(key) is not None})
+launches = []
+if os.path.exists(sys.argv[2]):
+    for line in open(sys.argv[2], encoding="utf-8"):
+        fields = line.split()
+        if len(fields) == 2:
+            launches.append({"started_at": float(fields[0]), "finished_at": float(fields[1])})
+print("IOS_LINKED_DAEMON_TIMELINE " + json.dumps({
+    "phase": sys.argv[3], "events": events[-20:],
+}, separators=(",", ":"), sort_keys=True))
+print("IOS_OWNER_RELAUNCH_TIMELINE " + json.dumps({
+    "phase": sys.argv[3], "launches": launches[-20:],
+}, separators=(",", ":"), sort_keys=True))
+PY
 }
 
 assert_linked_device_exchange_observed_before() {
@@ -144,6 +222,7 @@ assert_linked_device_exchange_observed_before() {
     kill "$observer_pid" >/dev/null 2>&1 || true
   fi
   wait "$observer_pid" >/dev/null 2>&1 || true
+  print_linked_device_observer_diagnostics "$observer_pid" "$phase"
 
   if [[ -s "$linked_observation_file" ]]; then
     linked_observed_at="$(cat "$linked_observation_file")"
