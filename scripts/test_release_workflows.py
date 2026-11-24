@@ -26,6 +26,7 @@ from test_local_blossom_server import BlossomStartupTests
 from test_ios_linking_observer import IosLinkingObserverTests
 from test_ios_probe_console import IosProbeConsoleTests
 from test_ios_verified_prefix import VerifiedIOSPrefixTests
+from test_mobile_provider_readback import MobileProviderReadbackTests
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -866,7 +867,10 @@ echo "$DERIVED_DATA"
 
     def test_physical_pairing_with_selected_emulator(self) -> None:
         script = self.copy_script("mobile-ios-android-linking-e2e.sh")
-        for helper in ("ios-xcuitest-accessibility-session.sh", "mobile-physical-ios-xctest.sh"):
+        for helper in (
+            "ios-xcuitest-accessibility-session.sh", "mobile-physical-ios-xctest.sh",
+            "mobile-qr-frames.sh", "mobile-link-usb.sh",
+        ):
             self.copy_script("lib/" + helper)
         self.write_executable(self.bin / "uname", "echo Darwin")
         self.write_executable(self.bin / "xcrun", "exit 71")

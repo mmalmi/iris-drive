@@ -50,23 +50,33 @@ class IrisDrivePhysicalLinkingProviderTest {
     fun readPostLinkFileThroughDocumentsProvider() {
         val name = requiredArgument("file_name")
         val expected = expectedContent()
-        val deadline = System.currentTimeMillis() + arguments.getString("wait_millis", "45000").toLong()
+        val waitMillis = arguments.getString("wait_millis", "45000").toLong()
+        val deadline = System.currentTimeMillis() + waitMillis
         var last: ByteArray? = null
+        var lastFailure = "no read attempted"
         while (System.currentTimeMillis() < deadline) {
-            runCatching { findDocument(name)?.let(::readDocument) }.getOrNull()?.let { content ->
-                last = content
-                if (content.contentEquals(expected)) {
-                    evidence("IRIS_ANDROID_PROVIDER_READ_SHA256=${sha256(content)}")
-                    return
+            try {
+                val document = findDocument(name)
+                if (document == null) {
+                    lastFailure = "$name is not listed"
+                } else {
+                    val content = readDocument(document)
+                    last = content
+                    if (content.contentEquals(expected)) {
+                        evidence("IRIS_ANDROID_PROVIDER_READ_SHA256=${sha256(content)}")
+                        return
+                    }
                 }
+            } catch (error: Throwable) {
+                lastFailure = error.toString()
             }
             Thread.sleep(200)
         }
-        assertArrayEquals(
-            "DocumentsProvider content mismatch for $name",
-            expected,
-            last ?: byteArrayOf(),
+        // Never read is not the same failure as reading wrong or empty bytes.
+        val read = last ?: throw AssertionError(
+            "DocumentsProvider never returned content for $name within $waitMillis ms; last failure: $lastFailure",
         )
+        assertArrayEquals("DocumentsProvider content mismatch for $name", expected, read)
     }
 
     private fun findDocument(name: String): Uri? {

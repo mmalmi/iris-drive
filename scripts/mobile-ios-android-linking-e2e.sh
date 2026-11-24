@@ -687,22 +687,41 @@ wait_for_android_authorized() {
   return 1
 }
 
-wait_for_android_provider_entry() {
-  local expected="$1"
-  local seconds="$2"
-  local deadline=$((SECONDS + seconds))
+# The provider lists a peer's file once its metadata syncs; its bytes may still
+# be downloading. `am instrument` force-stops the app and its sync, so wait until
+# the running app reads the expected bytes through the native provider first.
+wait_for_android_provider_content() {
+  local name="$1" expected_sha256="$2" seconds="$3"
+  local deadline=$((SECONDS + seconds)) request result last="no local read finished"
   while (( SECONDS < deadline )); do
     android_debug_action start-sync
-    sleep 0.5
-    android_debug_action dump-provider-list
-    if "$ADB" -s "$ANDROID_SERIAL_SELECTED" exec-out run-as "$ANDROID_PACKAGE" \
-      cat files/debug-provider-list.json 2>/dev/null \
-      | python3 -c 'import json,sys; expected=sys.argv[1]; entries=(json.load(sys.stdin).get("entries") or []); raise SystemExit(0 if any(e.get("path") == expected for e in entries) else 1)' \
-        "$expected" >/dev/null 2>&1; then
+    request="read-$SECONDS-$RANDOM"
+    "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell am start -W -n "$ANDROID_ACTIVITY" \
+      --es "$DEBUG_ACTION_EXTRA" dump-provider-read \
+      --es to.iris.drive.DEBUG_PROVIDER_PATH "$name" \
+      --es to.iris.drive.DEBUG_PROVIDER_REQUEST_ID "$request" >/dev/null
+    for _ in $(seq 1 20); do
+      result="$("$ADB" -s "$ANDROID_SERIAL_SELECTED" exec-out run-as "$ANDROID_PACKAGE" \
+        cat files/debug-provider-read.json 2>/dev/null || true)"
+      [[ "$result" != *"\"request_id\":\"$request\""* ]] || break
+      sleep 0.25
+    done
+    if last="$(python3 -c 'import json,sys
+try:
+    r = json.loads(sys.argv[3])
+except ValueError:
+    print("no local read result"); raise SystemExit(1)
+if r.get("request_id") != sys.argv[1]:
+    print("no local read result"); raise SystemExit(1)
+if r.get("error"):
+    print("error: " + r["error"]); raise SystemExit(1)
+print("size=%s sha256=%s" % (r.get("size"), r.get("sha256")))
+raise SystemExit(0 if r.get("sha256") == sys.argv[2] else 1)' "$request" "$expected_sha256" "$result")"; then
       return 0
     fi
     sleep 0.5
   done
+  echo "Android last local read of $name: $last" >&2
   return 1
 }
 
@@ -803,8 +822,9 @@ exchange_post_link_provider_files() {
     || fail "iOS did not complete its post-link provider write"
   assert_ios_provider_write_marker "$ios_content" \
     || fail "iOS provider write hash evidence did not match the source content"
-  wait_for_android_provider_entry "$ios_file" "$POST_LINK_WAIT_SECS" \
-    || fail "Android provider did not receive iOS post-link file $ios_file"
+  wait_for_android_provider_content "$ios_file" "$(printf '%s' "$ios_content" | sha256_text)" \
+    "$POST_LINK_WAIT_SECS" \
+    || fail "Android did not store iOS post-link file $ios_file locally"
   assert_android_provider_content "$ios_file" "$ios_content"
 
   write_android_provider_file "$android_file" "$android_content"

@@ -172,7 +172,8 @@ for required in (
     "IRIS_IOS_CAMERA_READY=1",
     "IRIS_IOS_REQUEST_QR_READY=1",
     "wait_for_android_authorized",
-    "wait_for_android_provider_entry",
+    "wait_for_android_provider_content",
+    "dump-provider-read",
     "run_android_provider_test",
     "writePostLinkFileThroughDocumentsProvider",
     "readPostLinkFileThroughDocumentsProvider",
@@ -412,6 +413,16 @@ for required in (
 ):
     if required not in android_provider_test:
         raise SystemExit(f"Android physical provider test is missing {required}")
+if "never returned content for" not in android_provider_test:
+    raise SystemExit("Android physical provider test must report a never-read file apart from wrong bytes")
+post_link_exchange = gate.split("exchange_post_link_provider_files() {", 1)[1].split("\n}\n", 1)[0]
+if post_link_exchange.index("wait_for_android_provider_content") \
+        > post_link_exchange.index("assert_android_provider_content"):
+    raise SystemExit(
+        "Android post-link read must wait for locally stored bytes before am instrument stops the app"
+    )
+if '"dump-provider-read" -> AndroidDebugSupport.writeProviderRead' not in android_activity:
+    raise SystemExit("Android debug build lacks the local provider read used by the physical gate")
 if "coldDocumentsContractClientCreatesWritesReadsRenamesAndDeletesWithoutMainActivity" \
         not in android_provider_contract_test:
     raise SystemExit("Android DocumentsProvider lacks a focused cold-process regression")

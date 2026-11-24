@@ -921,6 +921,7 @@ class MainActivity : ComponentActivity() {
             )
             "start-sync" -> dispatch(NativeActions.startSync())
             "dump-provider-list" -> AndroidDebugSupport.writeProviderList(this)
+            "dump-provider-read" -> AndroidDebugSupport.writeProviderRead(this, lifecycleScope, intent)
             "probe-network" -> AndroidDebugSupport.writeNetworkProbe(this, lifecycleScope, intent)
             "refresh" -> refresh()
         }

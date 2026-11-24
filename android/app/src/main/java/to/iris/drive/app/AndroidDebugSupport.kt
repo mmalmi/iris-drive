@@ -10,6 +10,7 @@ import org.json.JSONObject
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.security.MessageDigest
 import to.iris.drive.app.core.NativeCore
 
 internal object AndroidDebugSupport {
@@ -17,9 +18,12 @@ internal object AndroidDebugSupport {
     const val OWNER_EXTRA = "to.iris.drive.DEBUG_OWNER"
     const val REQUEST_EXTRA = "to.iris.drive.DEBUG_REQUEST"
     const val RELAY_EXTRA = "to.iris.drive.DEBUG_RELAY"
+    private const val PROVIDER_PATH_EXTRA = "to.iris.drive.DEBUG_PROVIDER_PATH"
+    private const val PROVIDER_REQUEST_ID_EXTRA = "to.iris.drive.DEBUG_PROVIDER_REQUEST_ID"
     private const val STATE_FILE = "debug-state.json"
     private const val ENV_FILE = "debug-env.json"
     private const val PROVIDER_LIST_FILE = "debug-provider-list.json"
+    private const val PROVIDER_READ_FILE = "debug-provider-read.json"
     private const val NETWORK_PROBE_FILE = "debug-network-probe.json"
     private const val NETWORK_HOST_EXTRA = "to.iris.drive.DEBUG_NETWORK_HOST"
     private const val NETWORK_PORT_EXTRA = "to.iris.drive.DEBUG_NETWORK_PORT"
@@ -74,6 +78,45 @@ internal object AndroidDebugSupport {
                 .writeText(NativeCore.providerListJson(context.filesDir.absolutePath))
         }
     }
+
+    /**
+     * Reads one My Drive file through the native provider path the
+     * DocumentsProvider uses, so a test can wait until its bytes are stored here.
+     */
+    fun writeProviderRead(context: Context, scope: CoroutineScope, intent: Intent?) {
+        if (!BuildConfig.DEBUG) return
+        val path = intent?.getStringExtra(PROVIDER_PATH_EXTRA).orEmpty()
+        val requestId = intent?.getStringExtra(PROVIDER_REQUEST_ID_EXTRA).orEmpty()
+        scope.launch(Dispatchers.IO) {
+            val result = JSONObject().put("request_id", requestId).put("path", path)
+            runCatching {
+                val output = File.createTempFile("debug-provider-read", ".bin", context.cacheDir)
+                try {
+                    val native = JSONObject(
+                        NativeCore.providerReadJson(context.filesDir.absolutePath, path, output.absolutePath),
+                    )
+                    val error = native.optString("error")
+                    if (error.isNotBlank()) {
+                        result.put("error", error)
+                    } else {
+                        val bytes = output.readBytes()
+                        result.put("size", bytes.size).put("sha256", sha256(bytes))
+                    }
+                } finally {
+                    output.delete()
+                }
+            }.onFailure { error -> result.put("error", error.toString()) }
+            runCatching {
+                val staging = File(context.filesDir, "$PROVIDER_READ_FILE.tmp")
+                staging.writeText(result.toString())
+                staging.renameTo(File(context.filesDir, PROVIDER_READ_FILE))
+            }
+        }
+    }
+
+    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString("") { "%02x".format(it) }
 
     fun writeNetworkProbe(context: Context, scope: CoroutineScope, intent: Intent?) {
         if (!BuildConfig.DEBUG) return
