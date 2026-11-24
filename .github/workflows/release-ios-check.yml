@@ -23,6 +23,7 @@ on:
         description: Exact application source commit
         required: true
       ios_prefix_run:
+        description: Previous canonical run, or run/attempt, with successful pre-Files assertions
         type: string
         required: false
       debug_run:
@@ -40,7 +41,8 @@ permissions:
 jobs:
   ios:
     runs-on: macos-15
-    timeout-minutes: 75
+    # 55-minute GUI budget plus product staging and the 22-minute provider and idle tail.
+    timeout-minutes: 90
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
       SOURCE_ROOT: ${{ github.workspace }}/source
