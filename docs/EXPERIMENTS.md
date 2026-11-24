@@ -749,3 +749,49 @@ Warm batch time was 28 ms before and 25 ms after, with p95 latency of 7 ms and
 5 ms and daemon CPU time of 30 ms and 20 ms. Under pressure, batch time was
 357 ms before and 363 ms after. Daemon CPU time was 250 ms and 240 ms, and peak
 RSS was 128 MiB and 124 MiB. These are single serialized workload pairs.
+
+## 2026-11-24 Hosted iOS approval observer and physical provider readback
+
+Two 0.1.50 release-gate failures were harness races, not product latency.
+
+Hosted `ios-check` failed "linked CLI device did not apply the iOS approval
+within 15 seconds" in four of eight reverse approval phases across four runs
+and two commits. In every failing phase the iOS owner published its roster
+ops and approval receipt to the local relay within 0.1 s of the persisted
+approval. The native audit's late `approval_receipt_received` entries were the
+app reading its own receipt back after a relaunch. The host observer ran the
+linked CLI's one-shot `sync --timeout 2`, the owner relaunch (`xcrun simctl
+launch`) and the authorization check in one loop. When the approval landed
+after a sync's fetch, the next sync waited behind `simctl launch`, which held
+through XCTest teardown. The app came back 7.5 to 8.2 s after xcodebuild
+exited, 12 to 13 s after approval. In one phase the linked CLI applied the
+approval 0.3 s after that relaunch, past the deadline. Passing phases were
+the ones where an in-flight sync fetched the approval before the loop
+reached `simctl launch`.
+
+The linked CLI now runs as a daemon with open relay subscriptions, the
+product behaviour while awaiting approval. The observation loop reads only
+local status and the relaunch runs in its own loop. On this Mac with the
+0.1.50 CLI and the local relay, the linked daemon was authorized 0.81 s
+after the approve command started while a stub relaunch stayed blocked. A
+one-shot sync after approval took 4.1 s under load average 80, and a daemon
+applied the approval 0.115 s after the approve command returned.
+
+The physical gate read an iPhone file through the Android DocumentsProvider
+once the provider listed it. Listing proves metadata, not bytes. `am
+instrument` force-stopped the syncing Drive app 4 s after the iPhone save, and
+the native provider read only uses local storage, so the 45 s read never got
+bytes. The test reported that as `actual.length=0`. The gate now waits until
+the running app reads the expected SHA-256 through the native provider (debug
+action `dump-provider-read`) before instrumenting, and the test reports a
+never-read file with its last failure, apart from wrong or empty bytes.
+
+Results. Two consecutive hosted `ios-check` runs with the new observer passed
+against the same 0.1.50 build that had failed. The linked device applied the
+approval 4.7 and 2.6 s after it in the first run, and 3.8 and 1.8 s after it
+in the second; the host saw the receipt consumed within 5.1 s. Simulator boot
+took 115 and 102 s and the GUI linking phase 28 and 27 min, inside the 40-min
+budget. One earlier run failed before the observer, with XCTest "Timed out
+while acquiring background assertion" on a slow runner. The physical USB suite
+(iPhone and Pixel, four directions) passed with approvals in 4.7 to 8.4 s.
+Android stored each peer file locally 0.16 to 0.26 s after the readback started.
