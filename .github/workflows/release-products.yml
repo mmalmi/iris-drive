@@ -35,7 +35,7 @@ on:
         required: false
 
       ios_prefix_run:
-        description: Previous canonical run with successful pre-Files assertions
+        description: Previous canonical run, or run/attempt, with successful pre-Files assertions
         required: false
 
       debug_run:

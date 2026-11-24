@@ -1,9 +1,11 @@
 """Resume the hosted Files scenario only after verifying its canonical prefix."""
 import hashlib
+import io
 import json
 import os
 import re
 import subprocess
+import zipfile
 from pathlib import Path
 
 
@@ -23,14 +25,24 @@ PREFIX = [
 ]
 
 
+def selection(section):
+    selected = re.search(r'-only-testing:([^"\s]+)', section)
+    return selected.group(1) if selected else None
+
+
 def check_log(log):
-    sections = log.split('Command line invocation:')[1:]
+    sections = []
+    for section in log.split('Command line invocation:')[1:]:
+        # The smoke script retries a known runner failure once; judge only the last try.
+        if sections and selection(sections[-1]) == selection(section):
+            sections[-1] = section
+        else:
+            sections.append(section)
     if len(sections) <= len(PREFIX):
         raise ValueError('Previous gate did not reach the independent Files boundary')
     covered = []
     for name, section in zip([*PREFIX, BOUNDARY], sections):
-        selected = re.search(r'-only-testing:([^"\s]+)', section)
-        if not selected or selected.group(1) != name:
+        if selection(section) != name:
             raise ValueError('Unexpected previous test order or selection')
         if name == BOUNDARY:
             if not re.search(r'^Test Case .*testOpenDriveFolderInFilesApp.* started\.', section, re.MULTILINE):
@@ -53,6 +65,27 @@ def check_inputs(actions, source, products):
             raise ValueError(f'Previous gate has different inputs for {platform}')
     if 'IOS_CLI_OWNER_AUTHORIZATION_OBSERVED' not in actions:
         raise ValueError('Missing timed CLI approval proof')
+
+
+def parse_prefix_run(value, latest_attempt):
+    """IOS_PREFIX_RUN is `<run>` (its latest attempt) or `<run>/<attempt>`."""
+    match = re.fullmatch(r'([0-9]+)(?:/([0-9]+))?', value)
+    attempt = int(match.group(2) or latest_attempt) if match else 0
+    if not match or not 1 <= attempt <= latest_attempt:
+        raise ValueError('Invalid previous run or attempt')
+    return match.group(1), attempt
+
+
+def attempt_evidence(jobs, artifacts, source):
+    """Each attempt uploads its own evidence under the same name; take the one this job uploaded."""
+    job, = (job for job in jobs if job['name'] == 'ios-check / ios')
+    if not job.get('started_at') or not job.get('completed_at'):
+        raise ValueError('Previous attempt has not completed')
+    uploaded = [item for item in artifacts if item['name'] == 'ios-check-' + source and not item['expired']
+                and job['started_at'] <= item['created_at'] <= job['completed_at']]
+    if len(uploaded) != 1:
+        raise ValueError('Previous attempt has no single evidence artifact')
+    return job, uploaded[0]
 
 
 def resume_script(text):
@@ -79,33 +112,40 @@ def main():
         'ios-sim-release': os.environ['IOS_RELEASE_RUN'],
         'macos-release': os.environ['IOS_MAC_RUN'],
     }
-    if not previous.isdigit() or not all(run.isdigit() for run in products.values()):
+    if not all(run.isdigit() for run in products.values()):
         raise ValueError('Invalid hosted run identity')
 
     def get(suffix):
         return json.loads(gh('api', f'repos/{repository}/{suffix}'))
 
-    api = f'actions/runs/{previous}'
+    run_id = previous.split('/', 1)[0]
+    if not run_id.isdigit():
+        raise ValueError('Invalid hosted run identity')
+    api = f'actions/runs/{run_id}'
     run = get(api)
+    run_id, attempt = parse_prefix_run(previous, run['run_attempt'])
     if (run['status'] != 'completed' or run['event'] != 'workflow_dispatch' or run['head_sha'] != source
             or run['head_repository']['full_name'] != repository or run['path'] != '.github/workflows/release-products.yml'):
         raise ValueError('Previous run is not the canonical workflow at the exact candidate')
-    job, = (job for job in get(api + '/jobs?per_page=100')['jobs'] if job['name'] == 'ios-check / ios')
-    actions_log = gh('run', 'view', previous, '--repo', repository, '--job', str(job['id']), '--log')
+    job, artifact = attempt_evidence(get(f'{api}/attempts/{attempt}/jobs?per_page=100')['jobs'],
+                                     get(api + '/artifacts?per_page=100')['artifacts'], source)
+    actions_log = gh('run', 'view', run_id, '--repo', repository, '--job', str(job['id']), '--log')
     check_inputs(actions_log, source, products)
-    artifact, = (item for item in get(api + '/artifacts?per_page=100')['artifacts']
-                 if item['name'] == 'ios-check-' + source and not item['expired'])
     if not (artifact.get('digest') or '').startswith('sha256:'):
         raise ValueError('Previous evidence artifact has no digest')
+    archive = subprocess.check_output(['gh', 'api', f'repos/{repository}/actions/artifacts/{artifact["id"]}/zip'])
+    if 'sha256:' + hashlib.sha256(archive).hexdigest() != artifact['digest']:
+        raise ValueError('Previous evidence artifact does not match its digest')
     prefix_dir = output / 'verified-prefix'
-    gh('run', 'download', previous, '--repo', repository, '--name', artifact['name'], '--dir', str(prefix_dir))
+    zipfile.ZipFile(io.BytesIO(archive)).extractall(prefix_dir)
     xcode_log = (prefix_dir / 'xcode-tests.log').read_bytes()
     covered = check_log(xcode_log.decode(errors='replace'))
 
     shell = output / 'ios-gui-linking-smoke.sh'
     shell.write_text(resume_script(shell.read_text()))
     receipt = {
-        'commit': source, 'productRuns': products, 'previousRun': previous, 'artifactDigest': artifact['digest'],
+        'commit': source, 'productRuns': products, 'previousRun': run_id, 'previousAttempt': attempt,
+        'artifactDigest': artifact['digest'],
         'xcodeLogSha256': hashlib.sha256(xcode_log).hexdigest(), 'completed': covered, 'nextTest': BOUNDARY,
     }
     (output / 'verified-prefix.json').write_text(json.dumps(receipt, indent=2))
