@@ -1,3 +1,4 @@
+import FileProvider
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -16,6 +17,7 @@ struct PendingSharedItem: Identifiable, Equatable {
 final class ShareSaveModel: ObservableObject {
     enum Phase: Equatable {
         case loading
+        case waitingForFolders
         case notSetUp
         case ready
         case saving
@@ -48,6 +50,39 @@ final class ShareSaveModel: ObservableObject {
         self.folders = folders
         items = loaded
         phase = loaded.isEmpty ? .failed("Nothing here can be saved to Iris Drive.") : .ready
+    }
+
+    func prepareDestinations(
+        for staged: [PendingSharedItem],
+        delays: [Duration] = [.milliseconds(250), .milliseconds(750), .seconds(2), .seconds(4)],
+        read: @escaping @Sendable () throws -> [String]?
+    ) async {
+        items = staged
+        phase = .loading
+        var waits = delays.makeIterator()
+        while !Task.isCancelled {
+            do {
+                let folders = try await Task.detached(priority: .userInitiated, operation: read).value
+                guard !Task.isCancelled else { return }
+                loaded(staged, folders: folders)
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                let issue = error as NSError
+                guard issue.domain == NSFileProviderErrorDomain,
+                      issue.code == NSFileProviderError.serverUnreachable.rawValue,
+                      issue.localizedDescription.range(of: #"Missing chunk: [0-9a-f]{64}\b"#,
+                                                       options: .regularExpression) != nil else {
+                    phase = .failed(issue.localizedDescription)
+                    return
+                }
+                guard let delay = waits.next() else {
+                    phase = .waitingForFolders
+                    return
+                }
+                do { try await Task.sleep(for: delay) } catch { return }
+            }
+        }
     }
 
     func save(using saveItem: @escaping (PendingSharedItem, String) throws -> Void,
@@ -84,6 +119,7 @@ final class ShareSaveModel: ObservableObject {
 struct ShareSaveView: View {
     @ObservedObject var model: ShareSaveModel
     let onCancel: () -> Void
+    let onRetryFolders: () -> Void
     let onSave: () -> Void
 
     var body: some View {
@@ -92,6 +128,10 @@ struct ShareSaveView: View {
                 switch model.phase {
                 case .loading:
                     ProgressView("Getting ready…")
+                case .waitingForFolders:
+                    Text("Drive folders haven’t finished syncing.")
+                    Button("Try Again", action: onRetryFolders)
+                        .accessibilityIdentifier("shareRetryFolders")
                 case .notSetUp:
                     Text("Open Iris Drive and set it up on this device first.")
                         .accessibilityIdentifier("shareSaveNotSetUp")

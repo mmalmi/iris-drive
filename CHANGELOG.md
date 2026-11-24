@@ -5,6 +5,7 @@
 - Keep recent Calendar edits when the same calendar is changed in the browser
   and a native app.
 - Show completed syncs correctly when several devices send files at the same time.
+- Keep shared files ready to save on iPhone while destination folders sync.
 - Open the current Iris Sites catalog through the native Drive connection.
 - Connect approved devices directly when a configured address works in only one direction.
 - Open the pairing scanner from Devices on iPhone and identify the camera preview

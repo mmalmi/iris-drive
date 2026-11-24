@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 /// shows what will be saved and where, and saves only when asked to.
 final class ShareViewController: UIViewController {
     private let model = ShareSaveModel()
+    private var folderTask: Task<Void, Never>?
     private var didStartLoading = false
     private let upload = IrisDriveShareUpload()
     private var finished = false
@@ -29,6 +30,7 @@ final class ShareViewController: UIViewController {
     )
 
     deinit {
+        folderTask?.cancel()
         try? FileManager.default.removeItem(at: staging)
     }
 
@@ -38,6 +40,7 @@ final class ShareViewController: UIViewController {
         let host = UIHostingController(rootView: ShareSaveView(
             model: model,
             onCancel: { [weak self] in self?.cancel() },
+            onRetryFolders: { [weak self] in self?.retryFolders() },
             onSave: { [weak self] in self?.save() }
         ))
         addChild(host)
@@ -95,12 +98,20 @@ final class ShareViewController: UIViewController {
                 Task { @MainActor in self.model.phase = .failed(error) }
                 return
             }
-            do {
-                let folders = try FileProviderStorage.shareDestinations()
-                Task { @MainActor in self.model.loaded(items, folders: folders) }
-            } catch {
-                Task { @MainActor in self.model.phase = .failed(error.localizedDescription) }
-            }
+            Task { @MainActor in self.prepareFolders(for: items) }
+        }
+    }
+
+    private func retryFolders() {
+        guard model.phase == .waitingForFolders else { return }
+        prepareFolders(for: model.items)
+    }
+
+    private func prepareFolders(for items: [PendingSharedItem]) {
+        guard !finished else { return }
+        folderTask?.cancel()
+        folderTask = Task { [model] in
+            await model.prepareDestinations(for: items) { try FileProviderStorage.shareDestinations() }
         }
     }
 
@@ -159,6 +170,8 @@ final class ShareViewController: UIViewController {
         case .saving:
             break
         default:
+            finished = true
+            folderTask?.cancel()
             removeStaging()
             extensionContext?.cancelRequest(withError: CocoaError(.userCancelled))
         }

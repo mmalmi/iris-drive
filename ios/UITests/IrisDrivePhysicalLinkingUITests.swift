@@ -329,19 +329,33 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         let labels = [displayName, "Save to \(displayName)"]
         let labelMatches = NSPredicate(format: "label IN %@", labels)
         let save = extensionApp.buttons["shareSaveButton"]
+        let sheet = extensionApp.buttons["shareSaveCancel"]
+        let filename = extensionApp.textFields["shareSaveName"]
+        let issue = extensionApp.descendants(matching: .any)["shareSaveError"]
+        let retry = extensionApp.buttons["shareRetryFolders"]
+        var retriedFolders = false
         var appRow = CGRect.null
         let deadline = Date().addingTimeInterval(48)
         while Date() < deadline {
-            if extensionApp.state != .notRunning && save.exists { break }
+            if extensionApp.state != .notRunning && sheet.exists {
+                if issue.exists { return XCTFail("Drive could not prepare the shared file: \(issue.label)") }
+                if filename.exists && save.exists && save.isEnabled { break }
+                if retry.exists && retry.isHittable && !retriedFolders {
+                    retry.tap()
+                    retriedFolders = true
+                }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+                continue
+            }
             let targets = source.descendants(matching: .any).matching(labelMatches)
             if let item = targets.allElementsBoundByIndex.first(where: { $0.isHittable }) {
                 item.tap()
-                if save.waitForExistence(timeout: 3) { break }
+                _ = sheet.waitForExistence(timeout: 3)
             } else if targets.count > 0 {
                 // Remote Apps-list text can report coordinates relative to its own view.
                 if let point = visibleShareRow(labels: labels, in: source) {
                     point.tap()
-                    if save.waitForExistence(timeout: 3) { break }
+                    _ = sheet.waitForExistence(timeout: 3)
                 } else {
                     let from = source.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.82))
                     let to = source.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.4))
@@ -371,11 +385,12 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.4))
         }
-        XCTAssertTrue(save.exists, "The Drive share extension did not present its save sheet")
-        let filename = extensionApp.textFields["shareSaveName"]
+        guard filename.exists && save.exists && save.isEnabled else {
+            return XCTFail(sheet.exists ? "Drive did not finish loading the destination folders" :
+                               "The Drive share extension did not open")
+        }
         XCTAssertEqual(filename.value as? String, name)
         XCTAssertTrue(extensionApp.descendants(matching: .any)["shareSaveFolder"].exists)
-        XCTAssertTrue(save.isEnabled)
         PhysicalLinkMarker.emit("IRIS_IOS_PROVIDER_SAVE_READY=1")
         save.tap()
     }
