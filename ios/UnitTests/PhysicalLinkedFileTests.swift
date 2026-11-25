@@ -23,6 +23,23 @@ final class PhysicalLinkedFileTests: XCTestCase {
             return XCTFail("Expected the file created by the paired Android fixture")
         }
         let expected = try XCTUnwrap(env["IRIS_XCUITEST_PEER_SHA256"])
+        // Opening a file downloads its bytes when sync has not; give the app
+        // the same USB route to the file service that the linking test had.
+        var fixture: PhysicalLinkUSBFixture?
+        defer { fixture?.stop() }
+        if let value = env["IRIS_DRIVE_USB_FIXTURE_PORTS"], !value.isEmpty {
+            let ports = value.split(separator: ",").compactMap { UInt16($0) }
+            fixture = try PhysicalLinkUSBFixture(
+                ports: ports, token: try XCTUnwrap(env["IRIS_DRIVE_USB_FIXTURE_TOKEN"])
+            )
+            fixture?.start()
+            verifyUSBServices(ports: ports)
+        }
+        try assertReadsLinkedFile(named: filename, sha256: expected, group: group)
+        #endif
+    }
+
+    private func assertReadsLinkedFile(named filename: String, sha256 expected: String, group: String) throws {
         let base = try XCTUnwrap(FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group))
             .appendingPathComponent(IrisDriveSharedContainer.storageDirectoryName)
         let restarted = IrisDriveNativeCore(dataDir: base.path, appVersion: "physical-test")
@@ -30,9 +47,11 @@ final class PhysicalLinkedFileTests: XCTestCase {
         XCTAssertEqual(state.ui.profile?.authorizationState, "authorized")
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: file) }
-        _ = IrisDriveNativeProvider.read(dataDir: base.path, path: filename, outputPath: file.path)
+        let read = IrisDriveNativeProvider.read(dataDir: base.path, path: filename, outputPath: file.path)
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            return XCTFail("The provider did not read \(filename): \(read)")
+        }
         let actual = SHA256.hash(data: try Data(contentsOf: file)).map { String(format: "%02x", $0) }.joined()
         XCTAssertEqual(actual, expected)
-        #endif
     }
 }

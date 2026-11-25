@@ -1,4 +1,5 @@
 """Run the provider byte check inside the same physical app group as the UI test."""
+import os
 from pathlib import Path
 import plistlib
 import subprocess
@@ -19,6 +20,11 @@ def main():
         "IRIS_XCUITEST_PEER_FILE": filename,
         "IRIS_XCUITEST_PEER_SHA256": digest,
     })
+    if os.environ.get("IRIS_DRIVE_MOBILE_LINK_TRANSPORT") == "usb":
+        # Opening a file downloads its bytes; the app reaches the file service over USB.
+        run[target_name]["EnvironmentVariables"].update({
+            key: os.environ[key] for key in ("IRIS_DRIVE_USB_FIXTURE_PORTS", "IRIS_DRIVE_USB_FIXTURE_TOKEN")
+        })
     # __TESTROOT__ paths in the test description are relative to its containing directory.
     with tempfile.NamedTemporaryFile(suffix=".xctestrun", dir=Path(run_file).parent) as scoped:
         plistlib.dump(run, scoped)

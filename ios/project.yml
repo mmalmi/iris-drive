@@ -134,6 +134,7 @@ targets:
       - path: UnitTests
       - path: ShareExtension/ShareItemImporter.swift
       - path: ShareExtension/ShareSaveView.swift
+      - path: UITests/PhysicalLinkUSBFixture.swift
     settings:
       base:
         PRODUCT_NAME: IrisDriveIOSShareExtensionTests

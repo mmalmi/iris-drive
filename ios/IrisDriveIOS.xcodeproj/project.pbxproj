@@ -45,6 +45,7 @@
 		6D1D9D55F60F25701702EE14 /* IrisDriveBackupViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2262CD0A76753FF6C6D773B /* IrisDriveBackupViews.swift */; };
 		72E63AFAFBA1D302B2CEBA08 /* IrisDrivePhotoBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AFAFBCCA53880654AA26EBE /* IrisDrivePhotoBackup.swift */; };
 		7416D3315363238D639AFF6E /* IrisDriveContentLinkDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 380C73AB07C0999D07F8E4ED /* IrisDriveContentLinkDialog.swift */; };
+		777C09C0F28FE77E52858395 /* PhysicalLinkUSBFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77EF1FC24BC2687673953EF2 /* PhysicalLinkUSBFixture.swift */; };
 		815B33E7988F5B78C46957A3 /* keyboard-viewport.html in Resources */ = {isa = PBXBuildFile; fileRef = E41F97CC4C0E1F6DFCF75979 /* keyboard-viewport.html */; };
 		85A10B7EC9033C5254EC2898 /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B2A54EBAE0804BBCC2964E /* FileProviderEnumerator.swift */; };
 		872C7CEF3E9946E8A3BCBF61 /* IrisDriveCalendarModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C58D499ABF89689689DEBD /* IrisDriveCalendarModels.swift */; };
@@ -657,6 +658,7 @@
 				475352EA0C4DBE384F2485B0 /* IrisWebGatewayRetryTests.swift in Sources */,
 				0ACF8EF67A058135FDAC9E1D /* MobilePresenceTests.swift in Sources */,
 				AA158B7D94AE797B73C650B8 /* PhotoBackupTests.swift in Sources */,
+				777C09C0F28FE77E52858395 /* PhysicalLinkUSBFixture.swift in Sources */,
 				AE61E40E33A7E9D528A5979E /* PhysicalLinkedFileTests.swift in Sources */,
 				DF01644D115BD8E0B2580704 /* ShareItemImporter.swift in Sources */,
 				0BCF72504B29C05F66B5CC1B /* ShareItemImporterTests.swift in Sources */,
