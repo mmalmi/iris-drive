@@ -795,3 +795,47 @@ budget. One earlier run failed before the observer, with XCTest "Timed out
 while acquiring background assertion" on a slow runner. The physical USB suite
 (iPhone and Pixel, four directions) passed with approvals in 4.7 to 8.4 s.
 Android stored each peer file locally 0.16 to 0.26 s after the readback started.
+
+## 2026-11-25 Share sheet and Files listing while a linked device's root is in flight
+
+Five earlier physical gate runs failed at "iOS did not open the share
+extension and verify its destination file" (three in the first iOS-owner
+direction, one in the manual iOS-owner one, one Android-owner): the sheet stayed
+on "Drive folders haven't finished syncing", which it shows only for a
+`Missing chunk` error from the provider listing. Sync records a linked
+device's new root before its blocks arrive, and on iPhone only the app
+downloads them; it is suspended while the share sheet or Files is in front.
+The extensions logged nothing, and `devicectl` may not read the app group, so
+a scratch-only hosted test copied the extensions' log and Drive config into
+the app's Documents after each run. On a build with the new logging, the Files
+extension failed twice in one direction: once on an Android root about 2 s
+after the relay announced it (the app fetched it 5.8 s after the announcement,
+after its 3 s direct attempt), and once on a block of an Android root received over the
+direct FIPS transport. That block never reached the file service; Android's
+merged roots travel only that way, and in every observed run Android
+published no relay root before the iPhone's share.
+
+Two changes in the shared core. A provider listing that hits a missing chunk
+now builds the merged view through a store that fetches the blocks it reads
+from the file service and keeps them (folders and metadata, not file bytes),
+then lists again; a failed download keeps the `Missing chunk` message so the
+share sheet keeps waiting, and says why (a 404 reads differently from an
+unreachable server). A root received directly from a device is recorded only
+once its blocks are here, since that device is their only source.
+
+Device runs also showed three harness effects. A physical-test app built
+from the release sources must keep the test File Provider domain and display
+name ("Iris Drive Test"); otherwise Files browses a stale domain. Streaming
+the device syslog during a run slowed app launches from 4.4 to 8-20 s, which
+pushed the manual direction past its 30 s marker budget. In the manual
+direction, typing the first character inserts the "not a complete request"
+row below the field, and XCUITest keystrokes sent while it animated in were
+lost (the recording showed `htt//drive.iris...`), in three of five runs; the
+test now waits for that row before typing the rest, and retypes a field that
+still lost input.
+
+Results. With both changes, the two QR directions passed in all nine device
+runs, including every share sheet and Files check. The manual direction failed twice
+on the syslog slowdown and three times on lost keystrokes before the test
+waited for the hint row; with that wait, two consecutive runs passed all
+four directions.
