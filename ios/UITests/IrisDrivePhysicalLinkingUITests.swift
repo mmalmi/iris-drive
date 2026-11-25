@@ -172,17 +172,27 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         let request = decodedEnvironment("IRIS_XCUITEST_MANUAL_REQUEST_B64")
         manual.tap()
         let confirmation = app.alerts["Approve this device?"]
-        var remainder = request[...]
-        var prefix = ""
+        typeIntoEmptyManualEntry(manual, request.prefix(1))
+        var remainder = request.dropFirst()[...]
+        var prefix = String(request.prefix(1))
+        var retypes = 0
         while !remainder.isEmpty {
             let next = remainder.prefix(48)
             manual.typeText(String(next))
             prefix += next
             remainder = remainder.dropFirst(next.count)
             if remainder.isEmpty && confirmation.exists { break }
-            let entered = manual.value as? String ?? ""
+            var entered = manual.value as? String ?? ""
+            // Retype a field that lost keystrokes; one that keeps losing input still fails.
+            while entered != prefix && retypes < 2 && !confirmation.exists {
+                retypes += 1
+                clearManualEntry(manual)
+                typeIntoEmptyManualEntry(manual, prefix[...])
+                entered = manual.value as? String ?? ""
+            }
+            if remainder.isEmpty && confirmation.exists { break }
             let matched = zip(entered, prefix).prefix(while: { $0 == $1 }).count
-            XCTAssertTrue(entered == prefix, "Manual entry first differed at character \(matched) of \(prefix.count); field length \(entered.count)")
+            XCTAssertTrue(entered == prefix, "Manual entry first differed at character \(matched) of \(prefix.count); field length \(entered.count) after \(retypes) retypes")
         }
         PhysicalLinkMarker.emit("IRIS_IOS_MANUAL_REQUEST_ENTERED=1")
 
@@ -497,6 +507,24 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         XCTAssertTrue(scan.waitForExistence(timeout: 5), app.debugDescription)
         scan.tap()
         allowCameraAccessIfNeeded()
+    }
+
+    /// Typing the first character inserts the incomplete-request hint below the
+    /// field; keystrokes sent while that row animates in are lost on the device.
+    private func typeIntoEmptyManualEntry(_ manual: XCUIElement, _ text: Substring) {
+        guard let first = text.first else { return }
+        manual.typeText(String(first))
+        _ = app.staticTexts["That is not a complete request link or device ID."]
+            .waitForExistence(timeout: 3)
+        if text.count > 1 { manual.typeText(String(text.dropFirst())) }
+    }
+
+    private func clearManualEntry(_ manual: XCUIElement) {
+        for _ in 0..<3 {
+            let entered = manual.value as? String ?? ""
+            if entered.isEmpty || entered == manual.placeholderValue { return }
+            manual.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: entered.count))
+        }
     }
 
     private func openManualApprovalEntry() -> XCUIElement {
