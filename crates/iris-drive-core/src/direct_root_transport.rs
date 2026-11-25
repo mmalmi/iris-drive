@@ -1106,16 +1106,22 @@ pub async fn apply_direct_root_event(
     apply_direct_root_event_serialized(config_dir, event, sync, None).await
 }
 
+fn lock_config(
+    config_mutation: Option<&std::sync::Mutex<()>>,
+) -> Option<std::sync::MutexGuard<'_, ()>> {
+    config_mutation.map(|lock| {
+        lock.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    })
+}
+
 async fn apply_direct_root_event_serialized(
     config_dir: &Path,
     event: &Event,
     sync: Option<&FsFipsBlockSync>,
-    config_mutation: Option<&std::sync::Mutex<()>>,
+    config_mutation_lock: Option<&std::sync::Mutex<()>>,
 ) -> Result<bool> {
-    let config_mutation = config_mutation.map(|lock| {
-        lock.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    });
+    let config_mutation = lock_config(config_mutation_lock);
     if crate::share_index::is_share_index_event(event) {
         drop(config_mutation);
         let outcome = crate::share_index::apply_share_index_event(config_dir, event).await?;
@@ -1173,15 +1179,31 @@ async fn apply_direct_root_event_serialized(
         let materialize_after_download = root_cid
             .as_deref()
             .is_some_and(|root_cid| root_cid_belongs_to_peer(&config, root_cid));
-        let changed = matches!(outcome, crate::relay_sync::DriveRootApply::Applied);
-        config.save(config_path_in(config_dir))?;
-        drop(config_mutation);
+        let mut changed = matches!(outcome, crate::relay_sync::DriveRootApply::Applied);
+        if let (Some(sync), Some(root_cid)) = (sync, root_cid.as_deref()) {
+            // Only the announcing peer holds this root's blocks. Record the root
+            // once they are here: a recorded root this device cannot read fails
+            // every provider listing until the app runs again.
+            drop(config_mutation);
+            download_direct_root(sync, root_cid).await?;
+            let _config_mutation = lock_config(config_mutation_lock);
+            let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+            changed = matches!(
+                crate::relay_sync::apply_remote_drive_root_event(
+                    &mut config,
+                    event,
+                    Some(device.keys()),
+                )?,
+                crate::relay_sync::DriveRootApply::Applied
+            );
+            config.save(config_path_in(config_dir))?;
+        } else {
+            config.save(config_path_in(config_dir))?;
+            drop(config_mutation);
+        }
         if let Some(sync) = sync {
             sync.refresh_authorized_peers_from_config_dir(config_dir)
                 .await;
-            if let Some(root_cid) = root_cid {
-                download_direct_root(sync, &root_cid).await?;
-            }
         }
         let materialized = if sync.is_some() && materialize_after_download {
             let mut daemon =
@@ -1214,34 +1236,45 @@ async fn apply_direct_root_hint_serialized(
     sync: &FsFipsBlockSync,
     key: &str,
     source_peer: &str,
-    config_mutation: Option<&std::sync::Mutex<()>>,
+    config_mutation_lock: Option<&std::sync::Mutex<()>>,
 ) -> Result<bool> {
-    let config_mutation = config_mutation.map(|lock| {
-        lock.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    });
+    let config_mutation = lock_config(config_mutation_lock);
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let report = apply_direct_root_key_hint_to_config(
-        &mut config,
-        key,
-        source_peer,
-        current_unix_seconds(),
-    )?;
-    let changed = matches!(report.outcome, DirectRootHintApply::Applied);
-    if changed {
-        config.save(config_path_in(config_dir))?;
-    }
-    drop(config_mutation);
-    if changed {
-        sync.refresh_authorized_peers_from_config_dir(config_dir)
-            .await;
-    }
+    let published_at = current_unix_seconds();
+    let report = apply_direct_root_key_hint_to_config(&mut config, key, source_peer, published_at)?;
+    let applies = matches!(report.outcome, DirectRootHintApply::Applied);
     let should_pull = matches!(
         report.outcome,
         DirectRootHintApply::Applied | DirectRootHintApply::AlreadyCurrent
     );
-    let materialized = if let Some(root_cid) = report.root_cid.filter(|_| should_pull) {
-        download_direct_root(sync, &root_cid).await?;
+    let root_cid = report.root_cid.filter(|_| should_pull);
+    let mut changed = false;
+    if let Some(root_cid) = root_cid.as_deref() {
+        // Like a full frame: record the hinted root once its blocks are here.
+        drop(config_mutation);
+        download_direct_root(sync, root_cid).await?;
+        if applies {
+            let _config_mutation = lock_config(config_mutation_lock);
+            let mut current = AppConfig::load_or_default(config_path_in(config_dir))?;
+            let report =
+                apply_direct_root_key_hint_to_config(&mut current, key, source_peer, published_at)?;
+            changed = matches!(report.outcome, DirectRootHintApply::Applied);
+            if changed {
+                current.save(config_path_in(config_dir))?;
+            }
+        }
+    } else {
+        if applies {
+            config.save(config_path_in(config_dir))?;
+            changed = true;
+        }
+        drop(config_mutation);
+    }
+    if changed {
+        sync.refresh_authorized_peers_from_config_dir(config_dir)
+            .await;
+    }
+    let materialized = if let Some(root_cid) = root_cid {
         if root_cid_belongs_to_peer(&config, &root_cid) {
             let mut daemon =
                 crate::Daemon::open(config_dir).context("opening daemon to materialize merge")?;
@@ -1488,6 +1521,9 @@ async fn download_direct_root(sync: &FsFipsBlockSync, root_cid: &str) -> Result<
     .with_context(|| format!("downloading direct root {root_cid} over FIPS"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod download_tests;
 
 #[cfg(test)]
 mod tests {
