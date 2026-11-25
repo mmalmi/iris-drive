@@ -1045,6 +1045,7 @@ private struct AddDeviceSection: View {
     @ObservedObject var model: IrisDriveMobileModel
     @Binding var isExpanded: Bool
     let openScanner: () -> Void
+    @FocusState private var manualEntryFocused: Bool
 
     private var canAddManualDevice: Bool {
         IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -1061,6 +1062,7 @@ private struct AddDeviceSection: View {
                 TextField("Request link or device ID", text: $model.approveDeviceKey)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .focused($manualEntryFocused)
                     .accessibilityIdentifier("manualDeviceId")
                     .onSubmit {
                         submitManualDevice()
@@ -1078,7 +1080,10 @@ private struct AddDeviceSection: View {
                     Label("Approve", systemImage: "checkmark.circle")
                 }
                 .disabled(!canAddManualDevice)
-                if !model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                // Judge the entry once typing stops, like Android: a row inserted
+                // on the first keystroke shifts the form and loses the next ones.
+                if !manualEntryFocused,
+                   !model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    !canAddManualDevice {
                     Text("That is not a complete request link or device ID.")
                         .font(.caption)

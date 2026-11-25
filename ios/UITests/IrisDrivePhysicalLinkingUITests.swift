@@ -172,9 +172,8 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         let request = decodedEnvironment("IRIS_XCUITEST_MANUAL_REQUEST_B64")
         manual.tap()
         let confirmation = app.alerts["Approve this device?"]
-        typeIntoEmptyManualEntry(manual, request.prefix(1))
-        var remainder = request.dropFirst()[...]
-        var prefix = String(request.prefix(1))
+        var remainder = request[...]
+        var prefix = ""
         var retypes = 0
         while !remainder.isEmpty {
             let next = remainder.prefix(48)
@@ -187,7 +186,7 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
             while entered != prefix && retypes < 2 && !confirmation.exists {
                 retypes += 1
                 clearManualEntry(manual)
-                typeIntoEmptyManualEntry(manual, prefix[...])
+                manual.typeText(prefix)
                 entered = manual.value as? String ?? ""
             }
             if remainder.isEmpty && confirmation.exists { break }
@@ -507,16 +506,6 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         XCTAssertTrue(scan.waitForExistence(timeout: 5), app.debugDescription)
         scan.tap()
         allowCameraAccessIfNeeded()
-    }
-
-    /// Typing the first character inserts the incomplete-request hint below the
-    /// field; keystrokes sent while that row animates in are lost on the device.
-    private func typeIntoEmptyManualEntry(_ manual: XCUIElement, _ text: Substring) {
-        guard let first = text.first else { return }
-        manual.typeText(String(first))
-        _ = app.staticTexts["That is not a complete request link or device ID."]
-            .waitForExistence(timeout: 3)
-        if text.count > 1 { manual.typeText(String(text.dropFirst())) }
     }
 
     private func clearManualEntry(_ manual: XCUIElement) {
