@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Save to Iris Drive on iPhone and the Files apps on iPhone and Android show
+  your folders right away after another device changes the Drive, without
+  waiting for Iris Drive to sync in the background.
+
 ## 0.1.52 - 2026-11-25
 
 - Iris Drive for Mac is now published by Sirius Business Oy. After updating,

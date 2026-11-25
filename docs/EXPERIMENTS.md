@@ -828,14 +828,23 @@ from the release sources must keep the test File Provider domain and display
 name ("Iris Drive Test"); otherwise Files browses a stale domain. Streaming
 the device syslog during a run slowed app launches from 4.4 to 8-20 s, which
 pushed the manual direction past its 30 s marker budget. In the manual
-direction, typing the first character inserts the "not a complete request"
+direction, typing the first character inserted the "not a complete request"
 row below the field, and XCUITest keystrokes sent while it animated in were
-lost (the recording showed `htt//drive.iris...`), in three of five runs; the
-test now waits for that row before typing the rest, and retypes a field that
-still lost input.
+lost (the recording showed `htt//drive.iris...`), in three of five runs. The
+iPhone now shows that hint once typing stops, as Android checks on submit,
+and the test retypes a field that still lost input.
+
+Once listing fetches only folders, the app can show a peer's new file before
+it has downloaded the bytes, and the test backgrounds it for Files. The
+host's final byte check ran after the linking test, whose USB listener is the
+iPhone's only route to the file service, so opening the file could not
+download it (one run, Android's manual file). The byte check now starts the
+same listener, so it exercises the download on open that a person gets.
 
 Results. With both changes, the two QR directions passed in all nine device
-runs, including every share sheet and Files check. The manual direction failed twice
-on the syslog slowdown and three times on lost keystrokes before the test
-waited for the hint row; with that wait, two consecutive runs passed all
-four directions.
+runs on the earlier Android build, including every share sheet and Files
+check. The manual direction failed twice on the syslog slowdown and three
+times on lost keystrokes. With the Android app rebuilt with both changes, the
+hint shown after typing and the byte check's USB route, the last two runs
+passed all four directions; one run before them stopped at the start when the
+runner's USB listener could not bind its ports.
