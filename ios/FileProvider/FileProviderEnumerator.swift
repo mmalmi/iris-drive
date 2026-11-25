@@ -22,6 +22,9 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             observer.didEnumerate(items)
             observer.finishEnumerating(upTo: nil)
         } catch {
+            FileProviderStorage.debugLog(
+                "enumerate items container=\(containerIdentifier.rawValue) failed: \(error.localizedDescription)"
+            )
             observer.finishEnumeratingWithError(error)
         }
     }
@@ -51,6 +54,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             FileProviderStorage.recordSnapshot(items: items, anchor: currentAnchor)
             observer.finishEnumeratingChanges(upTo: currentAnchor, moreComing: false)
         } catch {
+            FileProviderStorage.debugLog("enumerate changes failed: \(error.localizedDescription)")
             observer.finishEnumeratingWithError(error)
         }
     }

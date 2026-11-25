@@ -294,16 +294,21 @@ impl<L: Store + Send + Sync + 'static> Store for WriteBackBlossomStore<L> {
             return Ok(Some(bytes));
         }
         let hex = to_hex(hash);
-        let Some(bytes) = self.client.try_download(&hex).await else {
-            if self
-                .missing
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                == 0
-                && let Ok(mut first_missing) = self.first_missing.lock()
-            {
-                *first_missing = Some(hex);
+        let bytes = match self.client.download(&hex).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                // Keep why: a server's explicit 404 reads differently from
+                // an unreachable or timed-out one.
+                if self
+                    .missing
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    == 0
+                    && let Ok(mut first_missing) = self.first_missing.lock()
+                {
+                    *first_missing = Some(format!("{hex} ({error})"));
+                }
+                return Ok(None);
             }
-            return Ok(None);
         };
         // Write-back to local so subsequent ops hit cache and don't
         // re-fetch.

@@ -1,5 +1,8 @@
+pub mod projection;
 pub mod read;
 pub mod reimport;
+#[cfg(test)]
+mod test_file_service;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

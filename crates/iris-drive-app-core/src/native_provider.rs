@@ -386,10 +386,10 @@ pub(crate) fn provider_list(
             .map_err(anyhow::Error::msg)?;
         let daemon = iris_drive_core::Daemon::open_with_config(config_dir, config)
             .with_context(|| format!("opening daemon at {}", Path::new(data_dir).display()))?;
-        let (visible_view, visible_root, _) = daemon
-            .provider_projection()
-            .await
-            .context("building provider view")?;
+        let (visible_view, visible_root, _) =
+            iris_drive_core::provider::projection::provider_projection(&daemon)
+                .await
+                .context("building provider view")?;
         if refresh_storage
             && let Err(error) = iris_drive_core::device_storage::local::refresh_local_report(
                 &daemon,
@@ -563,8 +563,7 @@ async fn native_provider(
 )> {
     let daemon = iris_drive_core::Daemon::open(data_dir)
         .with_context(|| format!("opening daemon at {}", Path::new(data_dir).display()))?;
-    let (_, visible, _) = daemon
-        .provider_projection()
+    let (_, visible, _) = iris_drive_core::provider::projection::provider_projection(&daemon)
         .await
         .context("building provider root")?;
     let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone())

@@ -111,7 +111,14 @@ final class ShareViewController: UIViewController {
         guard !finished else { return }
         folderTask?.cancel()
         folderTask = Task { [model] in
-            await model.prepareDestinations(for: items) { try FileProviderStorage.shareDestinations() }
+            await model.prepareDestinations(for: items) {
+                do {
+                    return try FileProviderStorage.shareDestinations()
+                } catch {
+                    FileProviderStorage.debugLog("share destinations unavailable: \(error.localizedDescription)")
+                    throw error
+                }
+            }
         }
     }
 
