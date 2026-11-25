@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 
 import { createPrivateKey, sign as cryptoSign } from 'node:crypto'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import os from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 import { buildNumberFromVersion } from './local-release-lib.mjs'
 import { appStoreInputs, runAppStore } from './app-store-submit.mjs'
+import { ascAuth } from './asc-auth.mjs'
+import { applyReleaseEnvDefaults } from './release-env.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
-loadEnvFileDefaults(join(repoRoot, '.env.release.local'))
+applyReleaseEnvDefaults({ repoRoot })
 const rawBaseUrl = process.env.IRIS_DRIVE_ASC_BASE_URL || 'https://api.appstoreconnect.apple.com/v1/'
 const baseUrl = rawBaseUrl.endsWith('/') ? rawBaseUrl : `${rawBaseUrl}/`
 const mode = process.argv[2] || ''
@@ -100,6 +101,7 @@ const defaultReviewNotes =
   'No demo account is required. To review, create or link a device in Iris Drive, then test file browsing and sync through the app provider surface. The app only syncs user-selected Iris Drive data between user-owned devices.'
 
 let authToken = ''
+let ascKeyId = ''
 
 try {
   await main()
@@ -185,30 +187,6 @@ async function runPublic(appId, build) {
   await summarizePublicBuild(build, selectedGroups)
 }
 
-function loadEnvFileDefaults(path) {
-  if (!existsSync(path)) {
-    return
-  }
-  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) {
-      continue
-    }
-    const key = trimmed.slice(0, trimmed.indexOf('=')).trim()
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || process.env[key]) {
-      continue
-    }
-    let value = trimmed.slice(trimmed.indexOf('=') + 1).trim()
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1)
-    }
-    process.env[key] = value
-  }
-}
-
 function envValue(names, fallback = '') {
   for (const name of names) {
     const value = String(process.env[name] ?? '').trim()
@@ -246,42 +224,15 @@ function workspaceVersion() {
 }
 
 function resolveAscAuth() {
-  const ascRoot = envValue(['IRIS_DRIVE_ASC_ROOT'], join(os.homedir(), '.appstoreconnect'))
-  let keyPath = envValue(['IRIS_DRIVE_ASC_AUTH_KEY_PATH', 'IRIS_DRIVE_ASC_KEY_PATH'])
-  if (!keyPath) {
-    const keyDir = join(ascRoot, 'private_keys')
-    if (existsSync(keyDir)) {
-      keyPath = readdirSync(keyDir)
-        .filter((entry) => /^AuthKey_.*\.p8$/.test(entry))
-        .sort()
-        .map((entry) => join(keyDir, entry))[0] ?? ''
-    }
+  const auth = ascAuth()
+  if (auth.problems.length > 0) {
+    fail(`${auth.problems.join('; ')} for App Store Connect API calls`, 2)
   }
-  let keyId = envValue(['IRIS_DRIVE_ASC_AUTH_KEY_ID', 'IRIS_DRIVE_ASC_KEY_ID'])
-  if (!keyId && keyPath) {
-    keyId = basename(keyPath).replace(/^AuthKey_/, '').replace(/\.p8$/, '')
+  if (!existsSync(auth.keyPath)) {
+    fail(`ASC API key file not found: ${auth.keyPath}`)
   }
-  let issuerId = envValue([
-    'IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID',
-    'IRIS_DRIVE_ASC_ISSUER_ID',
-  ])
-  const issuerPath = join(ascRoot, 'issuer.txt')
-  if (!issuerId && existsSync(issuerPath)) {
-    issuerId = readFileSync(issuerPath, 'utf8').trim()
-  }
-  if (!keyPath) {
-    fail('IRIS_DRIVE_ASC_AUTH_KEY_PATH is required for App Store Connect API calls', 2)
-  }
-  if (!keyId) {
-    fail('IRIS_DRIVE_ASC_AUTH_KEY_ID is required for App Store Connect API calls', 2)
-  }
-  if (!issuerId) {
-    fail('IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID is required for App Store Connect API calls', 2)
-  }
-  if (!existsSync(keyPath)) {
-    fail(`ASC API key file not found: ${keyPath}`)
-  }
-  return { keyPath, keyId, issuerId }
+  ascKeyId = auth.keyId
+  return auth
 }
 
 function base64url(input) {
@@ -330,7 +281,7 @@ function requireOk(status, body, operation) {
   if (status >= 200 && status < 300) {
     return body
   }
-  fail(`${operation} failed: HTTP ${status}\n${JSON.stringify(body, null, 2)}`)
+  fail(`${operation} failed with key ${ascKeyId}: HTTP ${status}\n${JSON.stringify(body, null, 2)}`)
 }
 
 async function getAll(path, params = {}) {
@@ -705,7 +656,7 @@ async function attachBuild(build, selectedGroups, label) {
     body,
   )
   if (!(status >= 200 && status < 300) && status !== 409) {
-    fail(`Attach failed: HTTP ${status}\n${JSON.stringify(responseBody, null, 2)}`)
+    fail(`Attach failed with key ${ascKeyId}: HTTP ${status}\n${JSON.stringify(responseBody, null, 2)}`)
   }
   const failures = []
   for (const group of selectedGroups) {

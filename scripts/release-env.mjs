@@ -40,6 +40,14 @@ export function loadReleaseEnv({
   return { ...loaded, ...env }
 }
 
+// Fills variables that env does not set at all from the release settings.
+export function applyReleaseEnvDefaults({ repoRoot, env = process.env }) {
+  const loaded = loadReleaseEnv({ repoRoot, localFileNames: ['.env.release.local'], env: {} })
+  for (const [key, value] of Object.entries(loaded)) {
+    if (env[key] === undefined) env[key] = value
+  }
+}
+
 // Runs a tool and returns its stdout; stderr stays visible, failures throw.
 export function runTool(command, args, { env = process.env, cwd, encoding = 'utf8' } = {}) {
   const result = spawnSync(command, args, {

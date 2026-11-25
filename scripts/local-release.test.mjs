@@ -355,8 +355,12 @@ test('local-release final dry-run rejects a missing Android keystore file', () =
   assert.match(result.stderr, /Android keystore file not found/)
 })
 
-test('local-release final dry-run rejects missing App Store Connect auth for iOS', () => {
+test('local-release final dry-run rejects unnamed App Store Connect auth for iOS', () => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-preflight-test-'))
+  // Another team's key in the keys folder must not be picked up.
+  mkdirSync(join(root, 'private_keys'))
+  writeFileSync(join(root, 'private_keys', 'AuthKey_OTHERTEAM.p8'), 'other team key')
+  writeFileSync(join(root, 'issuer.txt'), '11111111-1111-1111-1111-111111111111\n')
   const result = spawnSync(
     process.execPath,
     [
@@ -386,7 +390,7 @@ test('local-release final dry-run rejects missing App Store Connect auth for iOS
   )
 
   assert.equal(result.status, 1)
-  assert.match(result.stderr, /App Store Connect/)
+  assert.match(result.stderr, /App Store Connect.*IRIS_DRIVE_ASC_AUTH_KEY_PATH is required/)
   assert.doesNotMatch(result.stdout, /htree release publish/)
 })
 
@@ -864,18 +868,6 @@ test('iOS manual build keeps App Store Connect auth out of Xcode signing', () =>
   assert.match(script, /xcode_auth_args\(\)/)
   assert.match(script, /scripts\/ios-profiles/)
   assert.match(script, /CODE_SIGN_STYLE=Manual/)
-})
-
-test('iOS build uses the shared App Store Connect auth defaults', () => {
-  const script = readFileSync(
-    fileURLToPath(new URL('./ios-build', import.meta.url)),
-    'utf8',
-  )
-
-  assert.match(script, /IRIS_DRIVE_ASC_ROOT/)
-  assert.match(script, /private_keys/)
-  assert.match(script, /AuthKey_\*\.p8/)
-  assert.match(script, /issuer\.txt/)
 })
 
 test('iOS TestFlight path checks the App Store record before archiving', () => {
