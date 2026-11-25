@@ -54,6 +54,7 @@ import { releaseToolsEnv } from './release-tools.mjs'
 import { providerPublishEnv, requireProviderReady, verifyProviderHead } from './release-head-provider.mjs'
 import { stageHostedProduct } from './stage-hosted-product.mjs'
 import { loadReleaseEnv } from './release-env.mjs'
+import { ascAuth } from './asc-auth.mjs'
 import {
   assertNoPrivateBuildMetadata,
   normalizedTarOwnerArgs,
@@ -311,28 +312,11 @@ function resolveMacosNotaryAuth(env) {
   if (profile) {
     return { mode: 'keychain-profile', profile }
   }
-  const ascAuth = resolveIosAscAuth(env)
-  const keyPath = String(
-    env.IRIS_DRIVE_MACOS_NOTARY_KEY_PATH ??
-      env.IRIS_DRIVE_ASC_AUTH_KEY_PATH ??
-      env.IRIS_DRIVE_ASC_KEY_PATH ??
-      ascAuth.keyPath ??
-      '',
-  ).trim()
-  const keyId = String(
-    env.IRIS_DRIVE_MACOS_NOTARY_KEY_ID ??
-      env.IRIS_DRIVE_ASC_AUTH_KEY_ID ??
-      env.IRIS_DRIVE_ASC_KEY_ID ??
-      ascAuth.keyId ??
-      '',
-  ).trim()
-  const issuerId = String(
-    env.IRIS_DRIVE_MACOS_NOTARY_ISSUER_ID ??
-      env.IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID ??
-      env.IRIS_DRIVE_ASC_ISSUER_ID ??
-      ascAuth.issuerId ??
-      '',
-  ).trim()
+  const asc = resolveIosAscAuth(env)
+  const notary = name => String(env[`IRIS_DRIVE_MACOS_NOTARY_${name}`] ?? '').trim()
+  const keyPath = notary('KEY_PATH') || asc.keyPath
+  const keyId = notary('KEY_ID') || asc.keyId
+  const issuerId = notary('ISSUER_ID') || asc.issuerId
   return {
     mode: 'api-key',
     keyPath: keyPath ? resolve(repoRoot, keyPath) : '',
@@ -827,35 +811,8 @@ function androidKeystorePath(env) {
 }
 
 function resolveIosAscAuth(env) {
-  const ascRoot = String(env.IRIS_DRIVE_ASC_ROOT ?? join(os.homedir(), '.appstoreconnect')).trim()
-  let keyPath = String(env.IRIS_DRIVE_ASC_AUTH_KEY_PATH ?? env.IRIS_DRIVE_ASC_KEY_PATH ?? '').trim()
-  if (!keyPath) {
-    const keyDir = join(ascRoot, 'private_keys')
-    if (existsSync(keyDir)) {
-      const keyName = readdirSync(keyDir)
-        .filter((entry) => /^AuthKey_.*\.p8$/.test(entry))
-        .sort()[0]
-      if (keyName) {
-        keyPath = join(keyDir, keyName)
-      }
-    }
-  }
-  let keyId = String(env.IRIS_DRIVE_ASC_AUTH_KEY_ID ?? env.IRIS_DRIVE_ASC_KEY_ID ?? '').trim()
-  if (!keyId && keyPath) {
-    keyId = basename(keyPath).replace(/^AuthKey_/, '').replace(/\.p8$/, '')
-  }
-  let issuerId = String(
-    env.IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID ?? env.IRIS_DRIVE_ASC_ISSUER_ID ?? '',
-  ).trim()
-  const issuerPath = join(ascRoot, 'issuer.txt')
-  if (!issuerId && existsSync(issuerPath)) {
-    issuerId = readFileSync(issuerPath, 'utf8').trim()
-  }
-  return {
-    keyPath: keyPath ? resolve(repoRoot, keyPath) : '',
-    keyId,
-    issuerId,
-  }
+  const auth = ascAuth(env)
+  return { ...auth, keyPath: auth.keyPath ? resolve(repoRoot, auth.keyPath) : '' }
 }
 
 function validateFinalReleaseBuildInputs({ env, steps }) {
@@ -875,17 +832,10 @@ function validateFinalReleaseBuildInputs({ env, steps }) {
     }
   }
   if (steps.includes('ios')) {
-    const ascAuth = resolveIosAscAuth(env)
-    if (!ascAuth.keyPath) {
-      missing.push('App Store Connect API key file is required for iOS TestFlight')
-    } else if (!existsSync(ascAuth.keyPath)) {
-      missing.push(`App Store Connect API key file not found: ${ascAuth.keyPath}`)
-    }
-    if (!ascAuth.keyId) {
-      missing.push('App Store Connect API key ID is required for iOS TestFlight')
-    }
-    if (!ascAuth.issuerId) {
-      missing.push('App Store Connect issuer ID is required for iOS TestFlight')
+    const asc = resolveIosAscAuth(env)
+    missing.push(...asc.problems.map(problem => `App Store Connect for iOS TestFlight: ${problem}`))
+    if (asc.keyPath && !existsSync(asc.keyPath)) {
+      missing.push(`App Store Connect API key file not found: ${asc.keyPath}`)
     }
   }
   if (missing.length > 0) {

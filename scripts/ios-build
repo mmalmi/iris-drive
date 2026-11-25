@@ -33,6 +33,11 @@ load_env_file_defaults() {
 }
 
 load_env_file_defaults "$ROOT/.env.release.local"
+# A linked release worktree keeps its ignored settings in the main checkout.
+if common_dir="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+  && [[ "$(basename "$common_dir")" == .git ]]; then
+  load_env_file_defaults "$(dirname "$common_dir")/.env.release.local"
+fi
 
 IOS_DIR="$ROOT/ios"
 DIST_DIR="${IRIS_DRIVE_IOS_DIST_DIR:-$ROOT/dist/ios}"
@@ -184,8 +189,8 @@ ensure_release_native_path_remap() {
   export CC_SHELL_ESCAPED_FLAGS=1
 }
 
-# Explicit settings only: guessing the first key in ~/.appstoreconnect can pick
-# another team's key, whose expired agreements then fail uploads with 403.
+# The App Store Connect key is always named in settings: this Mac holds keys
+# for more than one team, and picking the first one sent uploads to the wrong team.
 asc_issuer_id() {
   printf '%s' "${IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID:-${IRIS_DRIVE_ASC_ISSUER_ID:-}}"
 }
@@ -195,7 +200,17 @@ asc_key_path() {
 }
 
 asc_key_id() {
-  printf '%s' "${IRIS_DRIVE_ASC_AUTH_KEY_ID:-${IRIS_DRIVE_ASC_KEY_ID:-}}"
+  local explicit key_file
+  explicit="${IRIS_DRIVE_ASC_AUTH_KEY_ID:-${IRIS_DRIVE_ASC_KEY_ID:-}}"
+  if [[ -n "$explicit" ]]; then
+    printf '%s' "$explicit"
+    return
+  fi
+  key_file="$(asc_key_path)"
+  key_file="${key_file##*/}"
+  [[ "$key_file" == AuthKey_*.p8 ]] || return 0
+  key_file="${key_file#AuthKey_}"
+  printf '%s' "${key_file%.p8}"
 }
 
 xcode_auth_args() {
