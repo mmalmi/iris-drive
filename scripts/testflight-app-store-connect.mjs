@@ -1,18 +1,21 @@
 #!/usr/bin/env node
 
 import { createPrivateKey, sign as cryptoSign } from 'node:crypto'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import os from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 import { buildNumberFromVersion } from './local-release-lib.mjs'
 import { appStoreInputs, runAppStore } from './app-store-submit.mjs'
+import { loadReleaseEnv } from './release-env.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
-loadEnvFileDefaults(join(repoRoot, '.env.release.local'))
+// Linked release worktrees have no ignored .env files; read the main checkout's too.
+for (const [key, value] of Object.entries(loadReleaseEnv({ repoRoot, localFileNames: ['.env.release.local'], env: {} }))) {
+  if (process.env[key] === undefined) process.env[key] = value
+}
 const rawBaseUrl = process.env.IRIS_DRIVE_ASC_BASE_URL || 'https://api.appstoreconnect.apple.com/v1/'
 const baseUrl = rawBaseUrl.endsWith('/') ? rawBaseUrl : `${rawBaseUrl}/`
 const mode = process.argv[2] || ''
@@ -185,30 +188,6 @@ async function runPublic(appId, build) {
   await summarizePublicBuild(build, selectedGroups)
 }
 
-function loadEnvFileDefaults(path) {
-  if (!existsSync(path)) {
-    return
-  }
-  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) {
-      continue
-    }
-    const key = trimmed.slice(0, trimmed.indexOf('=')).trim()
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || process.env[key]) {
-      continue
-    }
-    let value = trimmed.slice(trimmed.indexOf('=') + 1).trim()
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1)
-    }
-    process.env[key] = value
-  }
-}
-
 function envValue(names, fallback = '') {
   for (const name of names) {
     const value = String(process.env[name] ?? '').trim()
@@ -246,29 +225,12 @@ function workspaceVersion() {
 }
 
 function resolveAscAuth() {
-  const ascRoot = envValue(['IRIS_DRIVE_ASC_ROOT'], join(os.homedir(), '.appstoreconnect'))
-  let keyPath = envValue(['IRIS_DRIVE_ASC_AUTH_KEY_PATH', 'IRIS_DRIVE_ASC_KEY_PATH'])
-  if (!keyPath) {
-    const keyDir = join(ascRoot, 'private_keys')
-    if (existsSync(keyDir)) {
-      keyPath = readdirSync(keyDir)
-        .filter((entry) => /^AuthKey_.*\.p8$/.test(entry))
-        .sort()
-        .map((entry) => join(keyDir, entry))[0] ?? ''
-    }
-  }
-  let keyId = envValue(['IRIS_DRIVE_ASC_AUTH_KEY_ID', 'IRIS_DRIVE_ASC_KEY_ID'])
-  if (!keyId && keyPath) {
-    keyId = basename(keyPath).replace(/^AuthKey_/, '').replace(/\.p8$/, '')
-  }
-  let issuerId = envValue([
-    'IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID',
-    'IRIS_DRIVE_ASC_ISSUER_ID',
-  ])
-  const issuerPath = join(ascRoot, 'issuer.txt')
-  if (!issuerId && existsSync(issuerPath)) {
-    issuerId = readFileSync(issuerPath, 'utf8').trim()
-  }
+  // Never guess a key from ~/.appstoreconnect: a key of another team there
+  // fails with REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED, which looks like an
+  // agreement problem of this team.
+  const keyPath = envValue(['IRIS_DRIVE_ASC_AUTH_KEY_PATH', 'IRIS_DRIVE_ASC_KEY_PATH'])
+  const keyId = envValue(['IRIS_DRIVE_ASC_AUTH_KEY_ID', 'IRIS_DRIVE_ASC_KEY_ID'])
+  const issuerId = envValue(['IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID', 'IRIS_DRIVE_ASC_ISSUER_ID'])
   if (!keyPath) {
     fail('IRIS_DRIVE_ASC_AUTH_KEY_PATH is required for App Store Connect API calls', 2)
   }

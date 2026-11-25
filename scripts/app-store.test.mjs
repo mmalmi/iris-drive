@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -54,6 +54,10 @@ async function fixture(t, options = {}) {
       assert.deepEqual(body.data.relationships, { app: { data: { type: 'apps', id: 'APP' } } })
       version = { type: 'appStoreVersions', id: 'VERSION', attributes: { ...live.attributes, ...body.data.attributes, appStoreState: 'PREPARE_FOR_SUBMISSION' } }
       return send(version, 201)
+    }
+    if (method === 'PATCH' && path === 'appStoreVersions/VERSION') {
+      version = { ...version, attributes: { ...version.attributes, ...body.data.attributes } }
+      return send(version)
     }
     if (method === 'PATCH' && path === 'appStoreVersions/VERSION/relationships/build') { linkedBuild = options.ignoreAttach ? null : body.data.id; return send(body.data) }
     if (method === 'PATCH' && path === 'appStoreVersionLocalizations/LOCALE') { notes = body.data.attributes.whatsNew; return send({ type: 'appStoreVersionLocalizations', id: 'LOCALE' }) }
@@ -186,4 +190,42 @@ for (const items of [[], [exactItem]]) test(`App Store resumes a ready review wi
   assert.equal(result.status, 0, result.stderr)
   assert.equal(f.writes().filter(c => c.path === 'reviewSubmissions').length, 0)
   assert.equal(f.writes().filter(c => c.path === 'reviewSubmissionItems').length, 1 - items.length)
+})
+
+test('App Store moves an unsubmitted older draft to the requested version and build', async t => {
+  // Apple allows one editable version; an abandoned draft blocks creating a new one.
+  const f = await fixture(t, { version: { versionString: '0.1.36' }, linkedBuild: 'OLD_BUILD' })
+  const result = await f.run('submit')
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /WAITING_FOR_REVIEW/)
+  assert.equal(f.writes().filter(c => c.method === 'POST' && c.path === 'appStoreVersions').length, 0)
+  const rename = f.writes().find(c => c.method === 'PATCH' && c.path === 'appStoreVersions/VERSION')
+  assert.equal(rename?.body.data.attributes.versionString, '0.1.37')
+  assert.deepEqual(f.writes().find(c => c.path === 'appStoreVersions/VERSION/relationships/build')?.body.data, { type: 'builds', id: 'BUILD' })
+})
+
+test('App Store refuses an older draft that is already in review', async t => {
+  const f = await fixture(t, {
+    version: { versionString: '0.1.36', appStoreState: 'WAITING_FOR_REVIEW' }, linkedBuild: 'OLD_BUILD',
+    review: { state: 'WAITING_FOR_REVIEW' }, items: [exactItem],
+  })
+  const result = await f.run('submit')
+  assert.equal(result.status, 1, result.stdout)
+  assert.equal(f.writes().length, 0)
+})
+
+test('App Store Connect calls never guess an API key from the key folder', async t => {
+  const f = await fixture(t)
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-root-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  mkdirSync(join(root, 'private_keys'))
+  writeFileSync(join(root, 'private_keys', 'AuthKey_STRAY.p8'), generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }))
+  writeFileSync(join(root, 'issuer.txt'), '11111111-1111-1111-1111-111111111111')
+  const result = await f.run('status', {
+    IRIS_DRIVE_APP_STORE_NOTES_PATH: '', IRIS_DRIVE_ASC_ROOT: root,
+    IRIS_DRIVE_ASC_AUTH_KEY_PATH: '', IRIS_DRIVE_ASC_AUTH_KEY_ID: '', IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '',
+  })
+  assert.equal(result.status, 2, result.stdout)
+  assert.match(result.stderr, /IRIS_DRIVE_ASC_AUTH_KEY_PATH is required/)
+  assert.equal(f.calls.length, 0)
 })

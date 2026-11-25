@@ -866,16 +866,17 @@ test('iOS manual build keeps App Store Connect auth out of Xcode signing', () =>
   assert.match(script, /CODE_SIGN_STYLE=Manual/)
 })
 
-test('iOS build uses the shared App Store Connect auth defaults', () => {
+test('iOS build never guesses an App Store Connect key from the key folder', () => {
+  // Another team's key there fails with REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED.
   const script = readFileSync(
     fileURLToPath(new URL('./ios-build', import.meta.url)),
     'utf8',
   )
 
-  assert.match(script, /IRIS_DRIVE_ASC_ROOT/)
-  assert.match(script, /private_keys/)
-  assert.match(script, /AuthKey_\*\.p8/)
-  assert.match(script, /issuer\.txt/)
+  assert.doesNotMatch(script, /IRIS_DRIVE_ASC_ROOT/)
+  assert.doesNotMatch(script, /AuthKey_\*\.p8/)
+  assert.doesNotMatch(script, /issuer\.txt/)
+  assert.match(script, /IRIS_DRIVE_ASC_AUTH_KEY_PATH:-\$\{IRIS_DRIVE_ASC_KEY_PATH/)
 })
 
 test('iOS TestFlight path checks the App Store record before archiving', () => {

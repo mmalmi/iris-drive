@@ -75,6 +75,18 @@ export async function runAppStore({ action, app, build, versionName, notes, requ
         ['WAITING_FOR_REVIEW', 'IN_REVIEW', 'PENDING_APPLE_RELEASE', 'PENDING_DEVELOPER_RELEASE', 'PROCESSING_FOR_DISTRIBUTION', 'PROCESSING_FOR_APP_STORE'].includes(versionState(version)))) return report()
     throw new Error(`App Store version is ${versionState(version)} and cannot be prepared`)
   }
+  const drafts = version ? [] : versions.filter(v => editable.has(versionState(v)))
+  if (drafts.length > 1) throw new Error('Multiple editable App Store versions; resolve them in App Store Connect')
+  if (drafts.length === 1) {
+    // Apple allows one editable version, so an unsubmitted older draft blocks
+    // creating this one. Move that draft to this version and build instead.
+    version = await call('PATCH', `appStoreVersions/${drafts[0].id}`, {
+      type: 'appStoreVersions', id: drafts[0].id, attributes: { versionString: versionName },
+    })
+    if (version?.attributes?.versionString !== versionName) throw new Error('App Store draft was not moved to the requested version')
+    const previous = await call('GET', `appStoreVersions/${version.id}/relationships/build`)
+    attached = previous?.id === build.id ? previous : null
+  }
   if (!version) {
     const live = versions.find(v => released.has(versionState(v)))
     if (!live) throw new Error('An existing released App Store version is required to inherit metadata')
