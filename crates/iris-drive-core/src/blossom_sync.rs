@@ -22,13 +22,22 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use futures::stream::{self, StreamExt, TryStreamExt};
 use hashtree_blossom::{BlobAvailability, BlossomClient};
 use hashtree_core::{
     Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError, to_hex,
 };
 use thiserror::Error;
 
-use crate::block_sync::collect_live_sync_hashes;
+use crate::block_sync::{
+    LIVE_SYNC_BLOCK_CONCURRENCY, collect_live_sync_hashes,
+    collect_live_sync_hashes_without_leaf_reads,
+};
+
+/// Minimum number of blocks before issuing a batch `POST /upload/check` call.
+/// Publishes that already fit in a single concurrent upload wave upload directly
+/// without paying an extra round-trip.
+const UPLOAD_BATCH_CHECK_THRESHOLD: usize = LIVE_SYNC_BLOCK_CONCURRENCY + 1;
 
 #[derive(Debug, Error)]
 pub enum BlossomSyncError {
@@ -85,8 +94,11 @@ impl BackupCheckReport {
 }
 
 /// Walk the local tree rooted at `root` and upload every live-sync block to the
-/// configured Blossom write servers. Skips blobs the server already
-/// has via `upload_if_missing`.
+/// configured Blossom write servers.
+///
+/// Uses batch `POST /upload/check` when a write server supports it to skip
+/// reading or re-uploading already-present blocks, then uploads missing blocks
+/// concurrently with bounded in-flight work.
 pub async fn upload_tree<S>(
     tree: &HashTree<S>,
     root: &Cid,
@@ -98,22 +110,66 @@ where
     if client.write_servers().is_empty() {
         return Err(BlossomSyncError::NoServers);
     }
-    let hashes: HashSet<Hash> = collect_live_sync_hashes(tree, root, 4).await?;
+    let hashes: HashSet<Hash> =
+        collect_live_sync_hashes_without_leaf_reads(tree, root, LIVE_SYNC_BLOCK_CONCURRENCY)
+            .await?;
     let mut report = UploadReport {
         total_hashes: hashes.len(),
         ..Default::default()
     };
     let store = tree.get_store();
-    for hash in hashes {
-        let bytes = store
-            .get(&hash)
-            .await
-            .map_err(|e| BlossomSyncError::LocalStore(e.to_string()))?
-            .ok_or_else(|| BlossomSyncError::MissingLocally(to_hex(&hash)))?;
-        let (_, uploaded) = client
-            .upload_if_missing(&bytes)
-            .await
-            .map_err(|e| BlossomSyncError::Blossom(e.to_string()))?;
+    let mut remaining: Vec<Hash> = hashes.into_iter().collect();
+
+    if remaining.len() >= UPLOAD_BATCH_CHECK_THRESHOLD {
+        let mut present_hashes = Vec::new();
+        for server in client.write_servers() {
+            if remaining.len() < UPLOAD_BATCH_CHECK_THRESHOLD {
+                break;
+            }
+            let hex_hashes: Vec<String> = remaining.iter().map(to_hex).collect();
+            let Some(present) = client.check_uploads_on_server(&hex_hashes, server).await else {
+                continue;
+            };
+            let mut still_missing =
+                Vec::with_capacity(remaining.len().saturating_sub(present.len()));
+            for (hash, hex) in remaining.into_iter().zip(hex_hashes) {
+                if present.contains(&hex) {
+                    present_hashes.push(hash);
+                } else {
+                    still_missing.push(hash);
+                }
+            }
+            remaining = still_missing;
+        }
+        for hash in present_hashes {
+            if !store
+                .has(&hash)
+                .await
+                .map_err(|e| BlossomSyncError::LocalStore(e.to_string()))?
+            {
+                return Err(BlossomSyncError::MissingLocally(to_hex(&hash)));
+            }
+            report.already_present += 1;
+        }
+    }
+
+    let store = &store;
+    let mut uploads = stream::iter(remaining)
+        .map(|hash| async move {
+            let bytes = store
+                .get(&hash)
+                .await
+                .map_err(|e| BlossomSyncError::LocalStore(e.to_string()))?
+                .ok_or_else(|| BlossomSyncError::MissingLocally(to_hex(&hash)))?;
+            let (_, uploaded) = client
+                .upload_if_missing(&bytes)
+                .await
+                .map_err(|e| BlossomSyncError::Blossom(e.to_string()))?;
+            Ok::<bool, BlossomSyncError>(uploaded)
+        })
+        .buffer_unordered(LIVE_SYNC_BLOCK_CONCURRENCY);
+
+    while let Some(uploaded) = uploads.try_next().await? {
         if uploaded {
             report.uploaded += 1;
         } else {
@@ -138,7 +194,9 @@ pub async fn check_tree_on_server<S>(
 where
     S: Store + Send + Sync + 'static,
 {
-    let hashes: HashSet<Hash> = collect_live_sync_hashes(tree, root, 4).await?;
+    let hashes: HashSet<Hash> =
+        collect_live_sync_hashes_without_leaf_reads(tree, root, LIVE_SYNC_BLOCK_CONCURRENCY)
+            .await?;
     let sample_size = sample_size.max(1);
     let mut sorted = hashes.into_iter().collect::<Vec<_>>();
     sorted.sort_unstable();
@@ -350,7 +408,7 @@ where
     }
     let writeback = Arc::new(WriteBackBlossomStore::new(local_store, client));
     let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
-    let hashes = collect_live_sync_hashes(&tree, root, 4).await?;
+    let hashes = collect_live_sync_hashes(&tree, root, LIVE_SYNC_BLOCK_CONCURRENCY).await?;
     if writeback.missing() > 0 {
         let detail = writeback
             .first_missing()
@@ -380,7 +438,8 @@ where
     }
     let writeback = Arc::new(WriteBackBlossomStore::new(local_store, client));
     let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
-    let walked = hashtree_core::diff::collect_hashes(&tree, file, 4).await;
+    let walked =
+        hashtree_core::diff::collect_hashes(&tree, file, LIVE_SYNC_BLOCK_CONCURRENCY).await;
     if writeback.missing() > 0 {
         let detail = writeback
             .first_missing()
@@ -449,3 +508,6 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

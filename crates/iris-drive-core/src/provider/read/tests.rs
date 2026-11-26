@@ -115,3 +115,21 @@ async fn an_unreachable_file_says_it_is_not_stored_and_why() {
         "{message}"
     );
 }
+
+#[tokio::test]
+async fn streaming_read_to_path_downloads_missing_bytes_and_writes_atomically() {
+    let (dir, blocks) = drive_listing_a_file_without_its_bytes().await;
+    let service = file_service(blocks).await;
+    use_file_service(&dir, &service.url);
+    let daemon = Daemon::open(dir.path()).unwrap();
+    let provider = provider_in(&daemon).await;
+    let out = dir.path().join("out").join(NAME);
+
+    let item = super::read_provider_file_to_path(dir.path(), &provider, NAME, &out)
+        .await
+        .unwrap();
+
+    assert_eq!(item.size, CONTENT.len() as u64);
+    assert_eq!(std::fs::read(&out).unwrap(), CONTENT);
+    assert!(service.requests() > 0);
+}

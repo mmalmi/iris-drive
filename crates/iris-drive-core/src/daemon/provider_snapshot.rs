@@ -213,9 +213,13 @@ impl Daemon {
     }
 
     pub(super) async fn verify_provider_snapshot(&self, cid: &Cid) -> Result<(), DaemonError> {
-        let hashes = crate::block_sync::collect_live_sync_hashes(self.tree(), cid, 4)
-            .await
-            .map_err(ProjectionError::from)?;
+        let hashes = crate::block_sync::collect_live_sync_hashes_without_leaf_reads(
+            self.tree(),
+            cid,
+            crate::block_sync::LIVE_SYNC_BLOCK_CONCURRENCY,
+        )
+        .await
+        .map_err(ProjectionError::from)?;
         let store = self.tree.get_store();
         for hash in hashes {
             let bytes = store

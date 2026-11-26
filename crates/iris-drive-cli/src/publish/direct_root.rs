@@ -1416,9 +1416,13 @@ async fn collect_local_root_hashes(
         .list_directory(root)
         .await
         .context("reading local root directory")?;
-    let hashes = iris_drive_core::block_sync::collect_live_sync_hashes(daemon.tree(), root, 4)
-        .await
-        .context("walking local live-sync root blocks")?;
+    let hashes = iris_drive_core::block_sync::collect_live_sync_hashes_without_leaf_reads(
+        daemon.tree(),
+        root,
+        8,
+    )
+    .await
+    .context("walking local live-sync root blocks")?;
     let store = daemon.tree().get_store().clone();
     for hash in &hashes {
         if !store

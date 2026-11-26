@@ -27,9 +27,10 @@ async fn cache_hydration_rejects_symlinks_without_overwriting_external_files() {
         write_provider_file(&provider, path, b"remote replacement")
             .await
             .unwrap();
-        let entries = provider_entries(&tree, &provider.current_root().await, &BTreeMap::new())
-            .await
-            .unwrap();
+        let entries =
+            list_provider_entries(&tree, &provider.current_root().await, &BTreeMap::new())
+                .await
+                .unwrap();
 
         let result = hydrate_provider_cache(&provider, &entries, target.path()).await;
 
@@ -55,7 +56,7 @@ async fn cache_hydration_replaces_hardlinks_without_overwriting_external_files()
     write_provider_file(&provider, "private.txt", b"remote replacement")
         .await
         .unwrap();
-    let entries = provider_entries(&tree, &provider.current_root().await, &BTreeMap::new())
+    let entries = list_provider_entries(&tree, &provider.current_root().await, &BTreeMap::new())
         .await
         .unwrap();
 

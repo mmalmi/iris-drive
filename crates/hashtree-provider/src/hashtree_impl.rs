@@ -19,6 +19,7 @@ use crate::diff::{PathChange, path_diff};
 use crate::error::ProviderError;
 use crate::provider::{DirItem, Item, ItemKind, ProviderFs, SyncAnchor};
 
+mod stream_read;
 mod stream_write;
 
 const MODIFIED_AT_META_KEY: &str = "modified_at";
@@ -253,23 +254,25 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
         }
         let end = offset.saturating_add(size).min(resolved.size);
         if resolved.cid.key.is_some() {
-            // Encrypted content must be validated before slicing.
+            // Read only overlapping encrypted chunks while verifying the
+            // peer-controlled directory size against the decrypted tree.
             let data = self
                 .tree
-                .get(&resolved.cid, Some(resolved.size))
+                .read_file_range_cid(&resolved.cid, offset, Some(end))
                 .await
                 .map_err(map_err)?
                 .ok_or(ProviderError::NotFound)?;
-            // A directory entry is peer-controlled metadata; its declared size
-            // must not become a slice index until the payload agrees with it.
-            if data.len() as u64 != resolved.size {
+            let actual_size = self
+                .tree
+                .get_size_cid(&resolved.cid)
+                .await
+                .map_err(map_err)?;
+            if actual_size != resolved.size || data.len() as u64 != end - offset {
                 return Err(ProviderError::Backend(
                     "file size does not match directory entry".into(),
                 ));
             }
-            let start = offset as usize;
-            let stop = (end as usize).min(data.len());
-            return Ok(data[start..stop].to_vec());
+            return Ok(data);
         }
         let data = self
             .tree

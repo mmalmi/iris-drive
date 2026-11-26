@@ -848,3 +848,76 @@ times on lost keystrokes. With the Android app rebuilt with both changes, the
 hint shown after typing and the byte check's USB route, the last two runs
 passed all four directions; one run before them stopped at the start when the
 runner's USB listener could not bind its ports.
+
+## 2026-11-26 Native listing scaling, streaming large-file I/O, and Blossom/FIPS block sync
+
+Three user-visible bottlenecks and one latent sync bug were measured and fixed
+on `--release` builds (Apple Silicon macOS, on-disk `FsBlobStore`, isolated
+temp dirs):
+
+1. **Native/mobile folder listing and Share Sheet path resolution (`iris-drive-core`, `iris-drive-app-core`, `idrive`)**
+   - *Root cause*: `native_provider.rs` called `provider.item(&child.id)` for every
+     child returned by `list()`, re-reading, decrypting, and decoding the parent
+     directory tree node $N+1$ times ($O(N^2)$ in folder size). Share Sheet
+     destination resolution (`native_provider_resolve_path`) also walked the
+     entire Drive instead of only the target folder. Listing and timestamp
+     projection were duplicated between `iris-drive-app-core` and `idrive`.
+   - *Fix*: Unified into single-pass `list_provider_entries` and
+     single-directory `list_provider_dir_entries` in `iris-drive-core::provider::list`,
+     reading each directory block once and removing the duplicated copies.
+
+2. **Large-file provider read/write/import memory and encrypted range reads (`hashtree-provider`, `iris-drive-core`, `iris-drive-app-core`, `idrive`)**
+   - *Root cause*: Opening a file through the native/CLI provider read the whole
+     plaintext into a `Vec<u8>` (~2.1× file size peak RSS, risking OOM kills in
+     iOS File Provider / Share extensions). `idrive provider write` and
+     `idrive import` buffered files >2 MiB whole in RAM. `HashTreeProviderFs::read`
+     decrypted the entire file on encrypted range reads instead of reading only
+     overlapping chunks. Aligning workspace `sha2` to the already-locked `0.11.1`
+     also enabled hardware SHA-256 on streaming file writes/imports.
+   - *Fix*: Added atomic streaming `HashTreeProviderFs::read_file_to_path` and
+     `read_provider_file_to_path`; switched encrypted `HashTreeProviderFs::read`
+     to `read_file_range_cid` + `get_size_cid`; switched `idrive provider write`
+     and `index_dir_inner` (>2 MiB files) to streaming `put_stream` with
+     on-the-fly SHA-256.
+
+3. **Blossom/FIPS live-sync tree traversal, batch checks, and fanout-folder sync bug (`iris-drive-core`, `idrive`)**
+   - *Root cause*: `collect_live_sync_hashes` traversed directories and file
+     entries serially (defeating concurrency for multi-file downloads), read and
+     AES-GCM decrypted every 2 MiB leaf blob even for local-only uploads/checks,
+     and flattened `tree.list_directory` without recording internal
+     `LinkType::Fanout` / legacy `_chunk_<N>` directory pages (causing folders
+     with >174 entries to omit internal fanout blocks during Blossom upload).
+     `blossom_sync::upload_tree` uploaded blocks one by one without batching
+     `POST /upload/check`.
+   - *Fix*: Replaced recursive sequential traversal with a bounded concurrent
+     `FuturesUnordered` frontier walker (`LIVE_SYNC_BLOCK_CONCURRENCY = 8`) that
+     includes internal fanout pages and offers
+     `collect_live_sync_hashes_without_leaf_reads` for local upload/check/verify
+     paths. `upload_tree` now issues one batch `POST /upload/check` (when
+     blocks exceed one concurrent wave, >8 blocks) to skip unchanged blocks
+     without reading their bytes from disk, verifies `store.has()` locally, and
+     uploads missing blocks concurrently.
+
+### Results (`--release`, comparable before/after)
+
+| Flow & workload | Before | After | Change |
+|---|---:|---:|---:|
+| `native_provider_list` (1,100 files, 1,000 in `Photos/`, median of 5) | 4,365 ms | 6 ms | **727× faster** (−99.9%) |
+| `native_provider_resolve_path` (`Photos`, median of 5) | 1,915 ms | 5 ms | **383× faster** (−99.7%) |
+| `idrive provider list` (1,100 files, full CLI process, median of 5) | 32.8 ms | 17.8 ms | **1.8× faster** (−45.7%) |
+| `HashTreeProviderFs::read` (4 KiB range in 64 MiB encrypted video, median of 5) | 93 ms | 1 ms | **93× faster** (−98.9%) |
+| `idrive provider read` (128 MiB video, wall / peak RSS) | 317.9 ms / 273.9 MiB | 136.9 ms / 17.9 MiB | **2.3× faster, 15.3× less RAM** (−93.5% RSS) |
+| `idrive provider write` (128 MiB video, wall / peak RSS, default 64 MiB batch) | 739.4 ms / 278.3 MiB | 318.3 ms / 91.5 MiB | **2.3× faster, 3.0× less RAM** (34.7 MiB with 8 MiB mobile batch) |
+| `idrive import` (128 MiB video, wall / peak RSS, default 64 MiB batch) | 472.0 ms / 146.3 MiB | 301.1 ms / 89.5 MiB | **1.6× faster, 1.6× less RAM** (34.7 MiB with 8 MiB mobile batch) |
+| Blossom `initial_upload` (100×4 KiB + 32 MiB video, 128 blocks, 20 ms RTT, standard) | 8,346 ms | 550 ms | **15.2× faster** |
+| Blossom `incremental_edit` (1 file edited, 130 blocks, 20 ms RTT, standard) | 9,064 ms | 476 ms | **19.0× faster** |
+| Blossom `download_tree` (130 blocks, 20 ms RTT) | 7,749 ms | 596 ms | **13.0× faster** |
+| Blossom `initial_upload` (128 blocks, 20 ms RTT, `/upload/check` server) | 7,083 ms | 545 ms | **13.0× faster** |
+| Blossom `incremental_edit` (1 file edited, 130 blocks, 20 ms RTT, `/upload/check` server) | 5,980 ms (114 PUTs, 430 KB) | 48 ms (5 PUTs, 3.5 KB) | **125× faster, 124× less upload traffic** |
+
+Reproducible probes:
+- `cargo test --locked --release -p iris-drive-app-core --lib native_provider_list_and_range_read_probe -- --ignored --nocapture`
+- `cargo test --locked --release -p iris-drive-core --lib blossom_tree_sync_scaling_probe -- --ignored --nocapture`
+- Note: initial Blossom numbers are measured against a real loopback HTTP server
+  with fixed 20 ms per-request RTT; real WAN latency and bandwidth variance will
+  scale proportionally with RTT and concurrency (8).

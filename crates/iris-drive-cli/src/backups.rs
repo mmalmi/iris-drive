@@ -1,6 +1,9 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
-use hashtree_core::diff::collect_hashes;
+pub(crate) use iris_drive_core::backup_ops::{
+    backup_target_check_from_report, error_backup_target_check, normalize_blossom_url,
+    parse_backup_target, upload_tree_to_filesystem_replica, upload_tree_to_replica,
+};
 use iris_drive_core::backup_summary::is_default_blossom_server;
 
 pub(crate) fn cmd_blossom_servers(
@@ -392,19 +395,6 @@ pub(crate) fn cmd_backups_check(
     })
 }
 
-pub(crate) async fn upload_tree_to_filesystem_replica<S>(
-    tree: &HashTree<S>,
-    root: &Cid,
-    path: &Path,
-) -> Result<UploadReport>
-where
-    S: Store + Send + Sync + 'static,
-{
-    let replica = FsBlobStore::new(path)
-        .with_context(|| format!("opening filesystem backup target at {}", path.display()))?;
-    upload_tree_to_replica(tree, root, &replica).await
-}
-
 pub(crate) async fn upload_tree_to_lmdb_replica<S>(
     tree: &HashTree<S>,
     root: &Cid,
@@ -416,53 +406,6 @@ where
     let replica = LmdbBlobStore::new(path)
         .with_context(|| format!("opening LMDB backup target at {}", path.display()))?;
     upload_tree_to_replica(tree, root, &replica).await
-}
-
-pub(crate) async fn upload_tree_to_replica<S, R>(
-    tree: &HashTree<S>,
-    root: &Cid,
-    replica: &R,
-) -> Result<UploadReport>
-where
-    S: Store + Send + Sync + 'static,
-    R: Store + Send + Sync,
-{
-    let hashes = collect_hashes(tree, root, 4)
-        .await
-        .context("collecting encrypted backup blocks")?;
-    let mut report = UploadReport {
-        total_hashes: hashes.len(),
-        ..Default::default()
-    };
-    let local = tree.get_store();
-
-    for hash in hashes {
-        if replica
-            .has(&hash)
-            .await
-            .with_context(|| format!("checking backup blob {}", to_hex(&hash)))?
-        {
-            report.already_present += 1;
-            continue;
-        }
-
-        let bytes = local
-            .get(&hash)
-            .await
-            .with_context(|| format!("reading local backup blob {}", to_hex(&hash)))?
-            .ok_or_else(|| anyhow::anyhow!("missing local backup blob {}", to_hex(&hash)))?;
-        if replica
-            .put(hash, bytes)
-            .await
-            .with_context(|| format!("writing backup blob {}", to_hex(&hash)))?
-        {
-            report.uploaded += 1;
-        } else {
-            report.already_present += 1;
-        }
-    }
-
-    Ok(report)
 }
 
 pub(crate) fn ensure_configured_blossom_backup_targets(config: &mut AppConfig) -> bool {
@@ -499,151 +442,6 @@ fn implicit_configured_blossom_backup_targets(config: &AppConfig) -> Vec<BackupT
         .collect()
 }
 
-pub(crate) fn parse_backup_target(input: &str, label: Option<String>) -> Result<BackupTarget> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow::anyhow!("backup target is required"));
-    }
-
-    let (kind_hint, value) = if let Some(rest) = trimmed.strip_prefix("blossom:") {
-        (Some(BackupTargetKind::Blossom), rest)
-    } else if let Some(rest) = trimmed.strip_prefix("fips://") {
-        (Some(BackupTargetKind::Fips), rest)
-    } else if let Some(rest) = trimmed.strip_prefix("fips:") {
-        (Some(BackupTargetKind::Fips), rest)
-    } else if let Some(rest) = trimmed.strip_prefix("filesystem://") {
-        (Some(BackupTargetKind::Filesystem), rest)
-    } else if let Some(rest) = trimmed.strip_prefix("filesystem:") {
-        (Some(BackupTargetKind::Filesystem), rest)
-    } else if let Some(rest) = trimmed.strip_prefix("file://") {
-        (Some(BackupTargetKind::Filesystem), rest)
-    } else if let Some(rest) = trimmed.strip_prefix("fs://") {
-        (Some(BackupTargetKind::Filesystem), rest)
-    } else if let Some(rest) = trimmed.strip_prefix("fs:") {
-        (Some(BackupTargetKind::Filesystem), rest)
-    } else if let Some(rest) = trimmed.strip_prefix("lmdb://") {
-        (Some(BackupTargetKind::Lmdb), rest)
-    } else if let Some(rest) = trimmed.strip_prefix("lmdb:") {
-        (Some(BackupTargetKind::Lmdb), rest)
-    } else {
-        (None, trimmed)
-    };
-
-    let target_label = label
-        .map(|label| label.trim().to_string())
-        .filter(|label| !label.is_empty());
-    let kind = kind_hint.unwrap_or_else(|| {
-        if value.starts_with("http://") || value.starts_with("https://") {
-            BackupTargetKind::Blossom
-        } else if looks_like_local_backup_path(value) {
-            BackupTargetKind::Filesystem
-        } else {
-            BackupTargetKind::Fips
-        }
-    });
-
-    match kind {
-        BackupTargetKind::Blossom => {
-            let target = normalize_blossom_url(value)?;
-            Ok(BackupTarget {
-                id: format!("blossom:{target}"),
-                kind: BackupTargetKind::Blossom,
-                target,
-                label: target_label,
-                enabled: true,
-                last_sync: None,
-                last_check: None,
-            })
-        }
-        BackupTargetKind::Fips => {
-            let hex = normalize_pubkey(value)?;
-            let target = pubkey_npub(&hex);
-            Ok(BackupTarget {
-                id: format!("fips:{target}"),
-                kind: BackupTargetKind::Fips,
-                target,
-                label: target_label,
-                enabled: true,
-                last_sync: None,
-                last_check: None,
-            })
-        }
-        BackupTargetKind::Filesystem => {
-            let target = normalize_local_backup_path(value)?;
-            Ok(BackupTarget {
-                id: format!("filesystem:{target}"),
-                kind: BackupTargetKind::Filesystem,
-                target,
-                label: target_label,
-                enabled: true,
-                last_sync: None,
-                last_check: None,
-            })
-        }
-        BackupTargetKind::Lmdb => {
-            let target = normalize_local_backup_path(value)?;
-            Ok(BackupTarget {
-                id: format!("lmdb:{target}"),
-                kind: BackupTargetKind::Lmdb,
-                target,
-                label: target_label,
-                enabled: true,
-                last_sync: None,
-                last_check: None,
-            })
-        }
-    }
-}
-
-pub(crate) fn normalize_blossom_url(value: &str) -> Result<String> {
-    let trimmed = value.trim().trim_end_matches('/');
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        Ok(trimmed.to_string())
-    } else {
-        Err(anyhow::anyhow!(
-            "expected Blossom target URL starting with http:// or https://"
-        ))
-    }
-}
-
-pub(crate) fn looks_like_local_backup_path(value: &str) -> bool {
-    let value = value.trim();
-    value.starts_with('/')
-        || value.starts_with("~/")
-        || value.starts_with("./")
-        || value.starts_with("../")
-        || value.starts_with("\\\\")
-        || value.as_bytes().get(1).is_some_and(|byte| *byte == b':')
-}
-
-pub(crate) fn normalize_local_backup_path(value: &str) -> Result<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow::anyhow!("backup path is required"));
-    }
-    let trimmed = if cfg!(windows)
-        && trimmed.len() > 3
-        && trimmed.as_bytes()[0] == b'/'
-        && trimmed.as_bytes()[2] == b':'
-    {
-        &trimmed[1..]
-    } else {
-        trimmed
-    };
-
-    let path = if let Some(rest) = trimmed.strip_prefix("~/") {
-        dirs::home_dir()
-            .map(|home| home.join(rest))
-            .ok_or_else(|| anyhow::anyhow!("home directory is not available"))?
-    } else {
-        PathBuf::from(trimmed)
-    };
-    if path.as_os_str().is_empty() {
-        return Err(anyhow::anyhow!("backup path is required"));
-    }
-    Ok(path.to_string_lossy().to_string())
-}
-
 pub(crate) fn upload_report_json(report: &UploadReport) -> Value {
     json!({
         "total_hashes": report.total_hashes,
@@ -668,51 +466,4 @@ pub(crate) fn check_report_json(
         "download_bytes_per_second": report.download_bytes_per_second,
         "error": report.error,
     })
-}
-
-pub(crate) fn backup_target_check_from_report(
-    report: &iris_drive_core::blossom_sync::BackupCheckReport,
-    state: &str,
-    root_cid: &str,
-    error: Option<String>,
-) -> BackupTargetCheck {
-    BackupTargetCheck {
-        state: state.to_string(),
-        root_cid: root_cid.to_string(),
-        checked_at: unix_now(),
-        total_hashes: report.total_hashes,
-        sample_size: report.sample_size,
-        sampled_hashes: report.sampled_hashes,
-        present: report.present,
-        missing: report.missing,
-        unknown: report.unknown,
-        latency_ms: report.latency_ms,
-        download_bytes: report.download_bytes,
-        download_ms: report.download_ms,
-        download_bytes_per_second: report.download_bytes_per_second,
-        error: error.or_else(|| report.error.clone()),
-    }
-}
-
-pub(crate) fn error_backup_target_check(
-    root_cid: &str,
-    sample_size: usize,
-    error: String,
-) -> BackupTargetCheck {
-    BackupTargetCheck {
-        state: "error".to_string(),
-        root_cid: root_cid.to_string(),
-        checked_at: unix_now(),
-        total_hashes: 0,
-        sample_size,
-        sampled_hashes: 0,
-        present: 0,
-        missing: 0,
-        unknown: 0,
-        latency_ms: None,
-        download_bytes: None,
-        download_ms: None,
-        download_bytes_per_second: None,
-        error: Some(error),
-    }
 }

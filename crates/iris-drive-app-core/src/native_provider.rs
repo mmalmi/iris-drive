@@ -1,26 +1,23 @@
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::Mutex;
 
 use anyhow::Context;
-use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
+use hashtree_provider::{HashTreeProviderFs, ProviderFs};
 use iris_drive_core::config::DEFAULT_RELAYS;
 use iris_drive_core::paths::{config_path_in, key_path_in};
 use iris_drive_core::provider::{
-    ProviderListEntry, compose_provider_path, create_provider_dir,
+    compose_provider_path, create_provider_dir, list_provider_dir_entries, list_provider_entries,
     normalize_provider_document_path, normalize_provider_parent_path, normalize_provider_path,
-    optional_normalized_provider_path, provider_entry_is_probable_os_placeholder,
-    provider_file_probable_os_placeholder_family, provider_list_summary,
-    provider_path_is_child_document, provider_write_is_probable_os_placeholder,
-    rename_provider_path, sanitized_provider_file_name, split_provider_path, unique_provider_path,
-    write_provider_file, write_provider_file_from_path,
+    optional_normalized_provider_path, provider_file_probable_os_placeholder_family,
+    provider_list_summary, provider_modified_at_index, provider_path_is_child_document,
+    provider_write_is_probable_os_placeholder, rename_provider_path, sanitized_provider_file_name,
+    split_provider_path, unique_provider_path, write_provider_file, write_provider_file_from_path,
 };
 use iris_drive_core::{AppConfig, Profile};
 use serde_json::json;
 
 use crate::ffi::load_native_runtime_config_cached;
-use crate::provider_metadata::provider_modified_at_index;
 
 const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[25, 50, 100, 200, 400];
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
@@ -203,8 +200,7 @@ async fn import_provider_bytes(
     let config_lock =
         iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
     let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
-    let modified_at_by_path = BTreeMap::new();
-    let entries = provider_entries(&provider, &modified_at_by_path).await?;
+    let entries = list_provider_dir_entries(daemon.tree(), &visible_root, "").await?;
     let path = unique_provider_path(&entries, "", display_name, None);
     if provider_write_is_probable_os_placeholder(&entries, &path, bytes) {
         anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
@@ -273,14 +269,9 @@ async fn import_provider_file(
     let config_lock =
         iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
     let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
-    let modified_at_by_path = BTreeMap::new();
-    let entries = provider_entries(&provider, &modified_at_by_path).await?;
-    let path = unique_provider_path(
-        &entries,
-        share_sheet_folder.unwrap_or_default(),
-        display_name,
-        None,
-    );
+    let parent = share_sheet_folder.unwrap_or_default();
+    let entries = list_provider_dir_entries(daemon.tree(), &visible_root, parent).await?;
+    let path = unique_provider_path(&entries, parent, display_name, None);
     if size == 0 && provider_write_is_probable_os_placeholder(&entries, &path, &[]) {
         anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
     }
@@ -400,14 +391,13 @@ pub(crate) fn provider_list(
             tracing::warn!(%error, "measuring local Drive storage");
         }
         let modified_at_by_path = provider_modified_at_index(&visible_view);
-        let provider =
-            HashTreeProviderFs::open(daemon.tree_handle(), visible_root.root_cid.clone())
-                .await
-                .context("opening provider root")?;
-        let entries = provider_entries(&provider, &modified_at_by_path).await?;
-        let summary = provider_list_summary(provider.anchor().await.as_str(), &entries);
+        let entries =
+            list_provider_entries(daemon.tree(), &visible_root.root_cid, &modified_at_by_path)
+                .await?;
+        let anchor = visible_root.root_cid.to_string();
+        let summary = provider_list_summary(&anchor, &entries);
         Ok(json!({
-            "anchor": provider.anchor().await.as_str(),
+            "anchor": anchor,
             "root_cid": visible_root.root_cid.to_string(),
             "file_count": summary.file_count,
             "visible_file_bytes": summary.visible_file_bytes,
@@ -435,18 +425,14 @@ fn run_native_provider_read(
     runtime.block_on(async {
         let path = normalize_provider_path(path)?;
         let (_daemon, provider, _visible_root) = native_provider(data_dir).await?;
-        let (item, bytes) = iris_drive_core::provider::read::read_provider_file(
+        let output = PathBuf::from(output_path);
+        let item = iris_drive_core::provider::read::read_provider_file_to_path(
             Path::new(data_dir),
             &provider,
             &path,
+            &output,
         )
         .await?;
-        let output = PathBuf::from(output_path);
-        if let Some(parent) = output.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
-        }
-        std::fs::write(&output, bytes).with_context(|| format!("writing {}", output.display()))?;
         Ok(json!({
             "path": path,
             "output": output.display().to_string(),
@@ -471,7 +457,8 @@ fn run_native_provider_write(
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
         apply_provider_open_delay_for_test();
         if provider_file_probable_os_placeholder_family(&path, size).is_some() {
-            let entries = provider_entries(&provider, &BTreeMap::new()).await?;
+            let (parent, _) = split_provider_path(&path)?;
+            let entries = list_provider_dir_entries(daemon.tree(), &visible_root, &parent).await?;
             if provider_write_is_probable_os_placeholder(&entries, &path, &[]) {
                 anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
             }
@@ -570,48 +557,6 @@ async fn native_provider(
         .await
         .context("opening provider root")?;
     Ok((daemon, provider, visible.root_cid))
-}
-
-async fn provider_entries<P>(
-    provider: &P,
-    modified_at_by_path: &BTreeMap<String, i64>,
-) -> anyhow::Result<Vec<ProviderListEntry>>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    let mut entries = Vec::new();
-    let mut stack = vec![String::new()];
-    while let Some(parent) = stack.pop() {
-        let mut children = provider.read_dir(&parent).await?;
-        children.sort_by(|left, right| left.name.cmp(&right.name));
-        for child in children {
-            let item = provider.item(&child.id).await?;
-            let kind = match item.kind {
-                ItemKind::Directory => {
-                    stack.push(child.id.clone());
-                    "directory"
-                }
-                ItemKind::File => "file",
-            };
-            let modified_at = modified_at_by_path
-                .get(&child.id)
-                .copied()
-                .or(item.modified_at);
-            entries.push(ProviderListEntry {
-                path: child.id,
-                parent_path: parent.clone(),
-                display_name: child.name,
-                kind,
-                size: item.size,
-                version: item.version,
-                modified_at,
-            });
-        }
-    }
-    entries.sort_by(|left, right| left.path.cmp(&right.path));
-    let all_entries = entries.clone();
-    entries.retain(|entry| !provider_entry_is_probable_os_placeholder(&all_entries, entry));
-    Ok(entries)
 }
 
 async fn import_provider_mutation<P>(

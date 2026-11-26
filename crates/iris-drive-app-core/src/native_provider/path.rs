@@ -1,8 +1,8 @@
 use super::{
-    BTreeMap, Path, compose_provider_path, ensure_daemon_available_for_provider_mutation,
-    import_provider_mutation, json, native_provider, native_provider_runtime,
-    normalize_provider_document_path, normalize_provider_parent_path, normalize_provider_path,
-    optional_normalized_provider_path, provider_entries, sanitized_provider_file_name,
+    Path, compose_provider_path, ensure_daemon_available_for_provider_mutation,
+    import_provider_mutation, json, list_provider_dir_entries, native_provider,
+    native_provider_runtime, normalize_provider_document_path, normalize_provider_parent_path,
+    normalize_provider_path, optional_normalized_provider_path, sanitized_provider_file_name,
     split_provider_path, unique_provider_path,
 };
 
@@ -56,9 +56,8 @@ pub(super) fn run_native_provider_resolve_path(
         let parent_path = normalize_provider_parent_path(parent_path)?;
         let display_name = sanitized_provider_file_name(display_name);
         let excluding_path = optional_normalized_provider_path(excluding_path)?;
-        let (_daemon, provider, _visible_root) = native_provider(data_dir).await?;
-        let modified_at_by_path = BTreeMap::new();
-        let entries = provider_entries(&provider, &modified_at_by_path).await?;
+        let (daemon, _provider, visible_root) = native_provider(data_dir).await?;
+        let entries = list_provider_dir_entries(daemon.tree(), &visible_root, &parent_path).await?;
         let path = unique_provider_path(
             &entries,
             &parent_path,

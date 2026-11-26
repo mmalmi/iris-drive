@@ -4,113 +4,219 @@
 //! it must not block current file sync: deleting a placeholder should not require
 //! downloading the deleted file's old bytes through the history chain.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
-use futures::future::BoxFuture;
-use hashtree_core::diff::collect_hashes;
-use hashtree_core::{Cid, Hash, HashTree, HashTreeError, LinkType, Store};
+use futures::stream::{FuturesUnordered, StreamExt};
+use hashtree_core::{
+    Cid, DEFAULT_CHUNK_SIZE, Hash, HashTree, HashTreeError, Link, LinkType, Store, TreeNode,
+    decode_tree_node, decrypt_object, is_tree_node,
+};
 
 use crate::indexer::should_ignore_name;
 use crate::merge::{META_DIR, PREV_LINK_PATH};
 
+/// Bounded block-fetch/upload concurrency for live Drive tree sync.
+/// Keeps worst-case in-flight buffers (8 × 2 MiB chunks) safely within
+/// desktop and mobile extension memory budgets while saturating RTT.
+pub(crate) const LIVE_SYNC_BLOCK_CONCURRENCY: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum WalkKind {
+    RootDir,
+    UserDir,
+    MetaDir,
+    Content,
+}
+
 /// Collect blocks needed to read the current root.
 ///
-/// This includes visible directory/file content and current `.hashtree`
-/// metadata such as tombstones, root metadata, and conflict records. It
-/// intentionally skips `.hashtree/prev` targets because those are old history,
-/// not a prerequisite for applying the current snapshot.
+/// This includes visible directory/file content (including internal directory
+/// fanout pages) and current `.hashtree` metadata such as tombstones, root
+/// metadata, and conflict records. It intentionally skips `.hashtree/prev`
+/// targets because those are old history, not a prerequisite for applying the
+/// current snapshot.
 pub async fn collect_live_sync_hashes<S: Store>(
     tree: &HashTree<S>,
     root: &Cid,
     concurrency: usize,
 ) -> Result<HashSet<Hash>, HashTreeError> {
+    collect_live_sync_hashes_inner(tree, root, concurrency, true).await
+}
+
+/// Collect live-sync block hashes without reading or decrypting raw leaf data
+/// blobs (`LinkType::Blob`).
+///
+/// Use for local-store traversals (Blossom uploads, backup checks, local block
+/// availability probes) where callers check or stream the returned hashes
+/// directly rather than relying on traversal reads to populate a write-back
+/// store.
+pub async fn collect_live_sync_hashes_without_leaf_reads<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    concurrency: usize,
+) -> Result<HashSet<Hash>, HashTreeError> {
+    collect_live_sync_hashes_inner(tree, root, concurrency, false).await
+}
+
+async fn collect_live_sync_hashes_inner<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    concurrency: usize,
+    read_leaf_blobs: bool,
+) -> Result<HashSet<Hash>, HashTreeError> {
+    let concurrency = concurrency.max(1);
+    let prev_name = PREV_LINK_PATH
+        .rsplit_once('/')
+        .map_or(PREV_LINK_PATH, |(_, name)| name);
+    let store = tree.get_store();
     let mut hashes = HashSet::new();
-    collect_live_dir_hashes(tree, root, "", concurrency, &mut hashes).await?;
+    let mut visited = HashSet::new();
+    let mut pending = VecDeque::new();
+    let mut active = FuturesUnordered::new();
+
+    pending.push_back((root.hash, root.key, WalkKind::RootDir));
+
+    loop {
+        while active.len() < concurrency {
+            let Some((hash, key, kind)) = pending.pop_front() else {
+                break;
+            };
+            hashes.insert(hash);
+            if !visited.insert((hash, kind)) {
+                continue;
+            }
+            let store = &store;
+            active.push(async move {
+                let data = store
+                    .get(&hash)
+                    .await
+                    .map_err(|e| HashTreeError::Store(e.to_string()))?;
+                Ok::<_, HashTreeError>((key, kind, data))
+            });
+        }
+
+        let Some(result) = active.next().await else {
+            break;
+        };
+        let (key, kind, Some(data)) = result? else {
+            continue;
+        };
+        let plaintext = if let Some(key) = key {
+            decrypt_object(&data, &key).map_err(|e| HashTreeError::Decryption(e.to_string()))?
+        } else {
+            data
+        };
+        if !is_tree_node(&plaintext) {
+            continue;
+        }
+        let Ok(node) = decode_tree_node(&plaintext) else {
+            continue;
+        };
+
+        let legacy_fanout = is_legacy_directory_fanout(&node);
+        for link in &node.links {
+            let Some(child_kind) = classify_link(&node, link, kind, legacy_fanout, prev_name)
+            else {
+                continue;
+            };
+            if !read_leaf_blobs
+                && child_kind == WalkKind::Content
+                && link.link_type == LinkType::Blob
+                && (node.node_type == LinkType::File || link.size <= DEFAULT_CHUNK_SIZE as u64)
+            {
+                hashes.insert(link.hash);
+                continue;
+            }
+            if !visited.contains(&(link.hash, child_kind)) {
+                pending.push_back((link.hash, link.key, child_kind));
+            }
+        }
+    }
+
     Ok(hashes)
 }
 
-fn collect_live_dir_hashes<'a, S: Store>(
-    tree: &'a HashTree<S>,
-    dir: &'a Cid,
-    prefix: &'a str,
-    concurrency: usize,
-    hashes: &'a mut HashSet<Hash>,
-) -> BoxFuture<'a, Result<(), HashTreeError>> {
-    Box::pin(async move {
-        hashes.insert(dir.hash);
-        let entries = tree.list_directory(dir).await?;
-        for entry in entries {
-            let path = if prefix.is_empty() {
-                entry.name.clone()
-            } else {
-                format!("{prefix}/{}", entry.name)
-            };
-            let child = Cid {
-                hash: entry.hash,
-                key: entry.key,
-            };
-
-            if prefix.is_empty() && entry.name == META_DIR {
-                if entry.link_type == LinkType::Dir {
-                    collect_meta_dir_hashes(tree, &child, META_DIR, concurrency, hashes).await?;
+fn classify_link(
+    node: &TreeNode,
+    link: &Link,
+    kind: WalkKind,
+    legacy_fanout: bool,
+    prev_name: &str,
+) -> Option<WalkKind> {
+    if node.node_type == LinkType::File {
+        return Some(WalkKind::Content);
+    }
+    if matches!(
+        kind,
+        WalkKind::RootDir | WalkKind::UserDir | WalkKind::MetaDir
+    ) && is_internal_directory_link(node, link, legacy_fanout)
+    {
+        return Some(kind);
+    }
+    let is_dir = matches!(link.link_type, LinkType::Dir | LinkType::Fanout);
+    match kind {
+        WalkKind::RootDir => {
+            let name = link.name.as_deref()?;
+            if name == META_DIR {
+                Some(if is_dir {
+                    WalkKind::MetaDir
                 } else {
-                    collect_entry_hashes(tree, &child, concurrency, hashes).await?;
-                }
-                continue;
-            }
-
-            if should_ignore_name(&entry.name) {
-                continue;
-            }
-
-            if entry.link_type == LinkType::Dir {
-                collect_live_dir_hashes(tree, &child, &path, concurrency, hashes).await?;
+                    WalkKind::Content
+                })
+            } else if should_ignore_name(name) {
+                None
+            } else if is_dir {
+                Some(WalkKind::UserDir)
             } else {
-                collect_entry_hashes(tree, &child, concurrency, hashes).await?;
+                Some(WalkKind::Content)
             }
         }
-        Ok(())
+        WalkKind::UserDir => {
+            let name = link.name.as_deref()?;
+            if should_ignore_name(name) {
+                None
+            } else if is_dir {
+                Some(WalkKind::UserDir)
+            } else {
+                Some(WalkKind::Content)
+            }
+        }
+        WalkKind::MetaDir => {
+            let name = link.name.as_deref()?;
+            if name == prev_name {
+                None
+            } else {
+                Some(WalkKind::Content)
+            }
+        }
+        WalkKind::Content => Some(WalkKind::Content),
+    }
+}
+
+fn is_internal_chunk_name(name: &str) -> bool {
+    name.strip_prefix("_chunk_").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && suffix.bytes().all(|byte| byte.is_ascii_digit())
+            && suffix.parse::<usize>().is_ok()
     })
 }
 
-fn collect_meta_dir_hashes<'a, S: Store>(
-    tree: &'a HashTree<S>,
-    dir: &'a Cid,
-    prefix: &'a str,
-    concurrency: usize,
-    hashes: &'a mut HashSet<Hash>,
-) -> BoxFuture<'a, Result<(), HashTreeError>> {
-    Box::pin(async move {
-        hashes.insert(dir.hash);
-        let entries = tree.list_directory(dir).await?;
-        for entry in entries {
-            let path = format!("{prefix}/{}", entry.name);
-            if path == PREV_LINK_PATH {
-                continue;
-            }
-
-            let child = Cid {
-                hash: entry.hash,
-                key: entry.key,
-            };
-            if entry.link_type == LinkType::Dir {
-                collect_meta_dir_hashes(tree, &child, &path, concurrency, hashes).await?;
-            } else {
-                collect_entry_hashes(tree, &child, concurrency, hashes).await?;
-            }
-        }
-        Ok(())
-    })
+fn is_legacy_directory_fanout(node: &TreeNode) -> bool {
+    node.node_type == LinkType::Dir
+        && !node.links.is_empty()
+        && node.links.iter().all(|link| {
+            link.link_type == LinkType::Dir
+                && link.name.as_deref().is_some_and(is_internal_chunk_name)
+        })
 }
 
-async fn collect_entry_hashes<S: Store>(
-    tree: &HashTree<S>,
-    cid: &Cid,
-    concurrency: usize,
-    hashes: &mut HashSet<Hash>,
-) -> Result<(), HashTreeError> {
-    hashes.extend(collect_hashes(tree, cid, concurrency).await?);
-    Ok(())
+fn is_internal_directory_link(node: &TreeNode, link: &Link, legacy_fanout: bool) -> bool {
+    if node.node_type == LinkType::Fanout {
+        return matches!(link.link_type, LinkType::Dir | LinkType::Fanout);
+    }
+    legacy_fanout
+        && link.link_type == LinkType::Dir
+        && link.name.as_deref().is_some_and(is_internal_chunk_name)
 }
 
 /// Verify every referenced encrypted block without retaining file bytes or
@@ -123,7 +229,7 @@ pub(crate) async fn verify_reachable_blocks<S: Store>(
     let verified = HashTree::new(hashtree_core::HashTreeConfig::new(std::sync::Arc::new(
         store,
     )));
-    collect_hashes(&verified, root, 4).await?;
+    hashtree_core::diff::collect_hashes(&verified, root, LIVE_SYNC_BLOCK_CONCURRENCY).await?;
     Ok(())
 }
 
@@ -158,12 +264,52 @@ impl<S: Store> Store for RequiredBlocks<S> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
-    use hashtree_core::{DirEntry, HashTreeConfig, LinkType, MemoryStore};
+    use hashtree_core::{DirEntry, HashTreeConfig, LinkType, MemoryStore, StoreError};
+
+    struct RecordingStore {
+        inner: Arc<MemoryStore>,
+        gets: Mutex<Vec<Hash>>,
+    }
+
+    impl RecordingStore {
+        fn new(inner: Arc<MemoryStore>) -> Self {
+            Self {
+                inner,
+                gets: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn gets(&self) -> Vec<Hash> {
+            self.gets.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Store for RecordingStore {
+        async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
+            self.inner.put(hash, data).await
+        }
+
+        async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+            self.gets.lock().unwrap().push(*hash);
+            self.inner.get(hash).await
+        }
+
+        async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
+            self.inner.has(hash).await
+        }
+
+        async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
+            self.inner.delete(hash).await
+        }
+    }
 
     #[tokio::test]
     async fn live_sync_hashes_skip_prev_history_target() {
-        let store = std::sync::Arc::new(MemoryStore::new());
+        let store = Arc::new(MemoryStore::new());
         let tree = HashTree::new(HashTreeConfig::new(store));
         let (file_cid, _) = tree.put(b"visible bytes").await.unwrap();
         let visible_root = tree
@@ -192,5 +338,95 @@ mod tests {
         assert!(hashes.contains(&root_with_history.hash));
         assert!(hashes.contains(&file_cid.hash));
         assert!(!hashes.contains(&missing_prev.hash));
+    }
+
+    #[tokio::test]
+    async fn live_sync_hashes_include_fanout_directory_pages() {
+        let store = Arc::new(MemoryStore::new());
+        let tree = HashTree::new(HashTreeConfig::new(store.clone()));
+
+        // >174 entries triggers hashtree-core LinkType::Fanout internal directory pages.
+        let mut photo_entries = Vec::with_capacity(200);
+        for i in 0..200 {
+            let body = format!("photo-{i:04}");
+            let (cid, size) = tree.put(body.as_bytes()).await.unwrap();
+            photo_entries.push(
+                DirEntry::from_cid(format!("img_{i:04}.jpg"), &cid)
+                    .with_size(size)
+                    .with_link_type(LinkType::Blob),
+            );
+        }
+        let photos_cid = tree.put_directory(photo_entries).await.unwrap();
+        let root = tree
+            .put_directory(vec![
+                DirEntry::from_cid("Photos", &photos_cid).with_link_type(LinkType::Dir),
+            ])
+            .await
+            .unwrap();
+
+        let collected = collect_live_sync_hashes_without_leaf_reads(&tree, &root, 8)
+            .await
+            .unwrap();
+
+        // Copy only collected blocks to a fresh store and verify listing + reading succeed.
+        let dest_store = Arc::new(MemoryStore::new());
+        for hash in &collected {
+            let bytes = store.get(hash).await.unwrap().expect("block must exist");
+            dest_store.put(*hash, bytes).await.unwrap();
+        }
+        let dest_tree = HashTree::new(HashTreeConfig::new(dest_store));
+        let listed_root = dest_tree.list_directory(&root).await.unwrap();
+        assert_eq!(listed_root.len(), 1);
+        let photos_entry = &listed_root[0];
+        let listed_photos = dest_tree
+            .list_directory(&Cid {
+                hash: photos_entry.hash,
+                key: photos_entry.key,
+            })
+            .await
+            .unwrap();
+        assert_eq!(listed_photos.len(), 200);
+        // Must include root + photos fanout root + >=2 internal fanout pages + 200 photo blobs.
+        assert!(collected.len() >= 204);
+    }
+
+    #[tokio::test]
+    async fn live_sync_hashes_without_leaf_reads_skips_file_blob_reads() {
+        let base_store = Arc::new(MemoryStore::new());
+        let write_tree = HashTree::new(HashTreeConfig::new(base_store.clone()));
+
+        let (small_cid, small_size) = write_tree.put(b"small blob").await.unwrap();
+        let big_bytes = vec![0x5Au8; DEFAULT_CHUNK_SIZE * 2 + 123];
+        let (big_cid, big_size) = write_tree.put(&big_bytes).await.unwrap();
+        let root = write_tree
+            .put_directory(vec![
+                DirEntry::from_cid("small.txt", &small_cid)
+                    .with_size(small_size)
+                    .with_link_type(LinkType::Blob),
+                DirEntry::from_cid("big.bin", &big_cid)
+                    .with_size(big_size)
+                    .with_link_type(LinkType::File),
+            ])
+            .await
+            .unwrap();
+
+        let full_hashes = collect_live_sync_hashes(&write_tree, &root, 8)
+            .await
+            .unwrap();
+
+        let recording = Arc::new(RecordingStore::new(base_store));
+        let read_tree = HashTree::new(HashTreeConfig::new(recording.clone()));
+        let fast_hashes = collect_live_sync_hashes_without_leaf_reads(&read_tree, &root, 8)
+            .await
+            .unwrap();
+
+        assert_eq!(fast_hashes, full_hashes);
+        let gets = recording.gets();
+        // Only root dir and big.bin's File tree node should have been read (2 blocks total),
+        // NOT small.txt's blob or any of big.bin's 3 leaf chunks!
+        assert_eq!(gets.len(), 2);
+        assert!(gets.contains(&root.hash));
+        assert!(gets.contains(&big_cid.hash));
+        assert!(!gets.contains(&small_cid.hash));
     }
 }

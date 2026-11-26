@@ -509,11 +509,8 @@ fn index_dir_inner<'a, S: Store>(
                 e.link_type = LinkType::Dir;
                 entries.push(e);
             } else if metadata.is_file() {
-                let bytes = std::fs::read(&path)?;
-                let size = bytes.len() as u64;
-                let whole_file_hash = hashtree_core::sha256(&bytes);
                 let modified_at = file_modified_unix_seconds(&metadata);
-                let (cid, _) = tree.put(&bytes).await?;
+                let (cid, size, whole_file_hash) = index_file_entry(tree, &path, &metadata).await?;
                 let link_type = if size > hashtree_core::DEFAULT_CHUNK_SIZE as u64 {
                     LinkType::File
                 } else {
@@ -555,4 +552,42 @@ fn file_modified_unix_seconds(metadata: &std::fs::Metadata) -> Option<i64> {
         .ok()
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+}
+
+struct HashingFileReader {
+    file: std::fs::File,
+    hasher: sha2::Sha256,
+}
+
+impl std::io::Read for HashingFileReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        use sha2::Digest as _;
+        let count = self.file.read(buf)?;
+        self.hasher.update(&buf[..count]);
+        Ok(count)
+    }
+}
+
+async fn index_file_entry<S: Store>(
+    tree: &HashTree<S>,
+    path: &Path,
+    metadata: &std::fs::Metadata,
+) -> Result<(Cid, u64, [u8; 32]), IndexError> {
+    use sha2::Digest as _;
+    if metadata.len() <= hashtree_core::DEFAULT_CHUNK_SIZE as u64 {
+        let bytes = std::fs::read(path)?;
+        let size = bytes.len() as u64;
+        let whole_file_hash = hashtree_core::sha256(&bytes);
+        let (cid, _) = tree.put(&bytes).await?;
+        return Ok((cid, size, whole_file_hash));
+    }
+
+    let mut reader = HashingFileReader {
+        file: std::fs::File::open(path)?,
+        hasher: sha2::Sha256::new(),
+    };
+    let (cid, size) = tree
+        .put_stream(futures::io::AllowStdIo::new(&mut reader))
+        .await?;
+    Ok((cid, size, reader.hasher.finalize().into()))
 }

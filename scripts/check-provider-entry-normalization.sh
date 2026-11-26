@@ -68,10 +68,17 @@ require_contains "ios/FileProvider/FileProviderStorage.swift" 'case saveFolders 
 require_contains "android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentStore.kt" 'json.optJSONArray("save_folders")'
 require_absent "ios/FileProvider/FileProviderStorage.swift" 'split(separator: "/")'
 
-# Files from the share sheet, Files app, SAF and photo backup are stored in
-# chunks straight from disk, never read into memory whole.
+# Files from the share sheet, Files app, SAF and photo backup are stored and
+# opened in chunks straight from disk, never read into memory whole.
 require_contains "crates/iris-drive-app-core/src/native_provider.rs" "write_provider_file_from_path(&provider, &path, source)"
+require_contains "crates/iris-drive-cli/src/drive.rs" "write_provider_file_from_path(&provider, &path, &source)"
+require_contains "crates/iris-drive-app-core/src/native_provider.rs" "read_provider_file_to_path("
+require_contains "crates/iris-drive-cli/src/drive.rs" "read_provider_file_to_path("
+require_contains "crates/iris-drive-app-core/src/native_provider.rs" "list_provider_entries("
+require_contains "crates/iris-drive-cli/src/drive.rs" "list_provider_entries("
 require_absent "crates/iris-drive-app-core/src/native_provider.rs" "std::fs::read(source_path)"
+require_absent "crates/iris-drive-cli/src/drive.rs" "std::fs::read(&source)"
+require_absent "crates/iris-drive-app-core/src/native_provider.rs" "provider.item(&child.id)"
 require_absent "ios/ShareExtension/ShareItemImporter.swift" "let data = try Data(contentsOf: url)"
 require_contains "ios/ShareExtension/ShareViewController.swift" "FileProviderStorage.useSmallWriteBatches()"
 require_contains "ios/FileProvider/FileProviderExtension.swift" "FileProviderStorage.useSmallWriteBatches()"

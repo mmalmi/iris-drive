@@ -452,7 +452,7 @@ pub fn default_backup_check_sample_size() -> usize {
     DEFAULT_BACKUP_CHECK_SAMPLE_SIZE
 }
 
-async fn upload_tree_to_filesystem_replica<S>(
+pub async fn upload_tree_to_filesystem_replica<S>(
     tree: &HashTree<S>,
     root: &Cid,
     path: &Path,
@@ -465,7 +465,7 @@ where
     upload_tree_to_replica(tree, root, &replica).await
 }
 
-async fn upload_tree_to_replica<S, R>(
+pub async fn upload_tree_to_replica<S, R>(
     tree: &HashTree<S>,
     root: &Cid,
     replica: &R,
@@ -681,7 +681,8 @@ fn check_summary(report: &BackupCheckReport) -> BackupCheckSummary {
     }
 }
 
-fn backup_target_check_from_report(
+#[must_use]
+pub fn backup_target_check_from_report(
     report: &BackupCheckReport,
     state: &str,
     root_cid: &str,
@@ -705,7 +706,8 @@ fn backup_target_check_from_report(
     }
 }
 
-fn error_backup_target_check(
+#[must_use]
+pub fn error_backup_target_check(
     root_cid: &str,
     sample_size: usize,
     error: String,

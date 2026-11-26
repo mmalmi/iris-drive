@@ -1,8 +1,11 @@
+pub mod list;
 pub mod projection;
 pub mod read;
 pub mod reimport;
 #[cfg(test)]
 mod test_file_service;
+
+pub use list::{list_provider_dir_entries, list_provider_entries, provider_modified_at_index};
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

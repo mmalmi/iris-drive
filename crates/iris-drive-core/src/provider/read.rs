@@ -3,15 +3,10 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use hashtree_core::Cid;
-use hashtree_provider::{Item, ItemKind, ProviderFs};
+use hashtree_core::{Cid, Store};
+use hashtree_provider::{HashTreeProviderFs, Item, ItemKind, ProviderError, ProviderFs};
 
-/// Read a whole provider file, downloading its blocks first when needed.
-///
-/// A listing proves only that the directory blocks are local; the file's own
-/// blocks can still be on their way when sync was interrupted or has not run.
-/// Opening such a file downloads them from the configured file service, as
-/// Drive does. When every block was already local, the read error stands.
+/// Read a whole provider file into memory, downloading its blocks first when needed.
 pub async fn read_provider_file<P>(
     config_dir: &Path,
     provider: &P,
@@ -28,7 +23,48 @@ where
         Ok(bytes) => return Ok((item, bytes)),
         Err(error) => error,
     };
-    let file = Cid::parse(&item.version).with_context(|| format!("parsing the CID of {path}"))?;
+    download_missing_provider_file(config_dir, path, &item.version, unread).await?;
+    let bytes = provider
+        .read(&item.id, 0, item.size)
+        .await
+        .with_context(|| format!("reading {path} after downloading it"))?;
+    Ok((item, bytes))
+}
+
+/// Stream a provider file chunk by chunk to `output`, downloading missing
+/// blocks from the configured file service first when needed.
+///
+/// Avoids holding large videos in memory on iOS/Android extensions and desktop
+/// provider bridges.
+pub async fn read_provider_file_to_path<S>(
+    config_dir: &Path,
+    provider: &HashTreeProviderFs<S>,
+    path: &str,
+    output: &Path,
+) -> Result<Item<String>>
+where
+    S: Store + 'static,
+{
+    let unread = match provider.read_file_to_path(path, output).await {
+        Ok(item) => return Ok(item),
+        Err(ProviderError::IsDir) => anyhow::bail!("cannot read directory: {path}"),
+        Err(error) => error,
+    };
+    let item = provider.item(&path.to_owned()).await?;
+    download_missing_provider_file(config_dir, path, &item.version, unread).await?;
+    provider
+        .read_file_to_path(&item.id, output)
+        .await
+        .with_context(|| format!("reading {path} after downloading it"))
+}
+
+async fn download_missing_provider_file(
+    config_dir: &Path,
+    path: &str,
+    version: &str,
+    unread: ProviderError,
+) -> Result<()> {
+    let file = Cid::parse(version).with_context(|| format!("parsing the CID of {path}"))?;
     let download = crate::network_sync::download_file_from_blossom(config_dir, &file)
         .await
         .with_context(|| {
@@ -37,11 +73,7 @@ where
     if download.fetched == 0 {
         return Err(anyhow::Error::new(unread).context(format!("reading {path}")));
     }
-    let bytes = provider
-        .read(&item.id, 0, item.size)
-        .await
-        .with_context(|| format!("reading {path} after downloading it"))?;
-    Ok((item, bytes))
+    Ok(())
 }
 
 #[cfg(test)]

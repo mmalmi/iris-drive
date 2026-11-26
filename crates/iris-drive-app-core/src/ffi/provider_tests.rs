@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 mod large_file_tests;
+mod perf_probe;
 mod remote_root_tests;
 mod root_publish_tests;
 
@@ -775,13 +776,35 @@ fn provider_child_document_json_uses_core_path_relation() {
 
 #[test]
 fn provider_modified_at_index_ignores_unix_epoch_sentinel() {
-    let mut index = std::collections::BTreeMap::new();
-    crate::provider_metadata::remember_provider_modified_at(&mut index, "old-note.txt", 1);
-    crate::provider_metadata::remember_provider_modified_at(
-        &mut index,
-        "new-note.txt",
-        1_700_000_000,
-    );
+    let view = iris_drive_core::projection::PrimaryMergedView {
+        view: iris_drive_core::merge::MergedView {
+            files: vec![
+                iris_drive_core::merge::MergedEntry {
+                    path: "old-note.txt".to_string(),
+                    source_path: None,
+                    hash: [1; 32],
+                    size: 1,
+                    whole_file_hash: None,
+                    modified_at: Some(1),
+                    source_app_key_pubkey: "device".to_string(),
+                    published_at: 1_800_000_000,
+                },
+                iris_drive_core::merge::MergedEntry {
+                    path: "new-note.txt".to_string(),
+                    source_path: None,
+                    hash: [2; 32],
+                    size: 1,
+                    whole_file_hash: None,
+                    modified_at: Some(1_700_000_000),
+                    source_app_key_pubkey: "device".to_string(),
+                    published_at: 1_800_000_000,
+                },
+            ],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let index = iris_drive_core::provider::provider_modified_at_index(&view);
 
     assert!(!index.contains_key("old-note.txt"));
     assert_eq!(index.get("new-note.txt"), Some(&1_700_000_000));

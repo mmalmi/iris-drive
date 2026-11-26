@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use hashtree_core::{Cid, Hash, HashTree, HashTreeConfig, Store, StoreError, to_hex};
 use hashtree_network::{BlobRouteIdentity, BlobRouter};
 
-use crate::block_sync::collect_live_sync_hashes;
+use crate::block_sync::{LIVE_SYNC_BLOCK_CONCURRENCY, collect_live_sync_hashes};
 use crate::blossom_sync::DownloadReport;
 
 use super::FipsSyncError;
@@ -24,7 +24,7 @@ where
 {
     let writeback = Arc::new(MeasuredRouterStore::new(local_store, router));
     let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
-    let hashes = collect_live_sync_hashes(&tree, root, 4).await?;
+    let hashes = collect_live_sync_hashes(&tree, root, LIVE_SYNC_BLOCK_CONCURRENCY).await?;
     if writeback.missing() > 0 {
         let detail = writeback
             .first_missing()

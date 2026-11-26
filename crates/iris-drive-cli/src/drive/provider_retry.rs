@@ -116,9 +116,13 @@ pub(super) async fn prepare_provider_command(
 }
 
 async fn check_provider_root_locally_available(daemon: &Daemon, root: &Cid) -> Result<()> {
-    let hashes = iris_drive_core::block_sync::collect_live_sync_hashes(daemon.tree(), root, 4)
-        .await
-        .context("walking local provider root blocks")?;
+    let hashes = iris_drive_core::block_sync::collect_live_sync_hashes_without_leaf_reads(
+        daemon.tree(),
+        root,
+        8,
+    )
+    .await
+    .context("walking local provider root blocks")?;
     let store = daemon.tree().get_store().clone();
     for hash in hashes {
         if !store

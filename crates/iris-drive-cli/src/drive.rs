@@ -2,14 +2,14 @@
 use super::*;
 use iris_drive_core::provider::rename_provider_path as shared_rename_provider_path;
 use iris_drive_core::provider::{
-    ProviderListEntry, compose_provider_path, normalize_provider_document_path,
-    normalize_provider_parent_path, normalize_provider_path,
-    provider_entry_is_probable_os_placeholder, provider_file_probable_os_placeholder_family,
-    provider_list_summary, provider_write_is_probable_os_placeholder, sanitized_provider_file_name,
-    split_provider_path, unique_provider_path,
+    ProviderListEntry, compose_provider_path, list_provider_dir_entries, list_provider_entries,
+    normalize_provider_document_path, normalize_provider_parent_path, normalize_provider_path,
+    provider_file_probable_os_placeholder_family, provider_list_summary,
+    provider_modified_at_index, provider_write_is_probable_os_placeholder,
+    sanitized_provider_file_name, split_provider_path, unique_provider_path,
 };
 pub(crate) use iris_drive_core::provider::{
-    create_provider_dir, delete_provider_path, write_provider_file,
+    create_provider_dir, delete_provider_path, write_provider_file, write_provider_file_from_path,
 };
 
 use crate::provider_staging::{
@@ -266,7 +266,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     visible_view.expect("list command should have prebuilt merged view");
                 let modified_at_by_path = provider_modified_at_index(visible_view);
                 let entries =
-                    provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
+                    list_provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
                         .await?;
                 let summary = provider_list_summary(provider.anchor().await.as_str(), &entries);
                 tracing::debug!(
@@ -303,10 +303,8 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     .as_deref()
                     .map(normalize_provider_path)
                     .transpose()?;
-                let modified_at_by_path =
-                    visible_view.map_or_else(Default::default, provider_modified_at_index);
                 let entries =
-                    provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
+                    list_provider_dir_entries(daemon.tree(), &visible.root_cid, &parent_path)
                         .await?;
                 let path = unique_provider_path(
                     &entries,
@@ -331,16 +329,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             }
             ProviderCmd::Read { path, output } => {
                 let path = normalize_provider_path(&path)?;
-                let (item, bytes) = iris_drive_core::provider::read::read_provider_file(
-                    config_dir, &provider, &path,
+                let item = iris_drive_core::provider::read::read_provider_file_to_path(
+                    config_dir, &provider, &path, &output,
                 )
                 .await?;
-                if let Some(parent) = output.parent() {
-                    std::fs::create_dir_all(parent)
-                        .with_context(|| format!("creating {}", parent.display()))?;
-                }
-                std::fs::write(&output, bytes)
-                    .with_context(|| format!("writing {}", output.display()))?;
                 println!(
                     "{}",
                     json!({
@@ -352,9 +344,8 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             }
             ProviderCmd::HydrateCache { dir } => {
                 let phase = std::time::Instant::now();
-                let modified_at_by_path = BTreeMap::new();
                 let entries =
-                    provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
+                    list_provider_entries(daemon.tree(), &visible.root_cid, &BTreeMap::new())
                         .await?;
                 let report = hydrate_provider_cache(&provider, &entries, &dir).await?;
                 tracing::debug!(
@@ -419,19 +410,20 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 source,
             } => {
                 let path = normalize_provider_path(&path)?;
-                let bytes = std::fs::read(&source)
-                    .with_context(|| format!("reading {}", source.display()))?;
-                if provider_file_probable_os_placeholder_family(&path, bytes.len() as u64).is_some()
-                {
+                let size = std::fs::metadata(&source)
+                    .with_context(|| format!("reading {}", source.display()))?
+                    .len();
+                if provider_file_probable_os_placeholder_family(&path, size).is_some() {
+                    let (parent, _) = split_provider_path(&path)?;
                     let entries =
-                        provider_entries(daemon.tree(), &visible.root_cid, &BTreeMap::new())
+                        list_provider_dir_entries(daemon.tree(), &visible.root_cid, &parent)
                             .await?;
-                    if provider_write_is_probable_os_placeholder(&entries, &path, &bytes) {
+                    if provider_write_is_probable_os_placeholder(&entries, &path, &[]) {
                         anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
                     }
                 }
                 let phase = std::time::Instant::now();
-                write_provider_file(&provider, &path, &bytes).await?;
+                write_provider_file_from_path(&provider, &path, &source).await?;
                 tracing::debug!(
                     elapsed_ms = phase.elapsed().as_millis(),
                     "provider command wrote file"
@@ -553,14 +545,7 @@ fn provider_command_is_mutation(command: &ProviderCmd) -> bool {
 }
 
 fn provider_command_needs_merged_view(command: &ProviderCmd) -> bool {
-    matches!(
-        command,
-        ProviderCmd::List
-            | ProviderCmd::ResolvePath {
-                base_root_cid: None,
-                ..
-            }
-    )
+    matches!(command, ProviderCmd::List)
 }
 
 fn provider_command_base_root_cid(command: &ProviderCmd) -> Result<Option<Cid>> {
@@ -575,78 +560,6 @@ fn provider_command_base_root_cid(command: &ProviderCmd) -> Result<Option<Cid>> 
     raw.map(Cid::parse)
         .transpose()
         .context("parsing provider base root cid")
-}
-
-async fn provider_entries(
-    tree: &HashTree<FsBlobStore>,
-    root: &Cid,
-    modified_at_by_path: &BTreeMap<String, i64>,
-) -> Result<Vec<ProviderListEntry>> {
-    let mut entries = Vec::new();
-    let mut stack = vec![(String::new(), root.clone())];
-    while let Some((parent, dir_cid)) = stack.pop() {
-        let mut children = tree.list_directory_required(&dir_cid).await?;
-        children.sort_by(|a, b| a.name.cmp(&b.name));
-        for child in children {
-            let path = if parent.is_empty() {
-                child.name.clone()
-            } else {
-                format!("{parent}/{}", child.name)
-            };
-            let cid = Cid {
-                hash: child.hash,
-                key: child.key,
-            };
-            let kind = match child.link_type {
-                LinkType::Dir | LinkType::Fanout => {
-                    stack.push((path.clone(), cid.clone()));
-                    "directory"
-                }
-                LinkType::Blob | LinkType::File => "file",
-            };
-            entries.push(ProviderListEntry {
-                modified_at: modified_at_by_path.get(&path).copied(),
-                path,
-                parent_path: parent.clone(),
-                display_name: child.name,
-                kind,
-                size: child.size,
-                version: cid.to_string(),
-            });
-        }
-    }
-    entries.sort_by(|a, b| a.path.cmp(&b.path));
-    let all_entries = entries.clone();
-    entries.retain(|entry| !provider_entry_is_probable_os_placeholder(&all_entries, entry));
-    Ok(entries)
-}
-
-fn provider_modified_at_index(
-    view: &iris_drive_core::projection::PrimaryMergedView,
-) -> BTreeMap<String, i64> {
-    let mut index = BTreeMap::new();
-    for entry in &view.view.files {
-        let Some(modified_at) = entry.modified_at else {
-            continue;
-        };
-        remember_provider_modified_at(&mut index, &entry.path, modified_at);
-        let mut path = entry.path.as_str();
-        while let Some((parent, _name)) = path.rsplit_once('/') {
-            remember_provider_modified_at(&mut index, parent, modified_at);
-            path = parent;
-        }
-    }
-    index
-}
-
-fn remember_provider_modified_at(index: &mut BTreeMap<String, i64>, path: &str, modified_at: i64) {
-    if path.is_empty() || modified_at < 946_684_800 {
-        return;
-    }
-    index
-        .entry(path.to_owned())
-        .and_modify(|existing| *existing = (*existing).max(modified_at))
-        .or_insert(modified_at);
 }
 
 fn top_level_entry_count(entries: &[ProviderListEntry]) -> usize {
@@ -843,7 +756,7 @@ async fn provider_root_report(
     tree: &HashTree<FsBlobStore>,
     root: &Cid,
 ) -> Result<ProviderRootReport> {
-    let entries = provider_entries(tree, root, &BTreeMap::new()).await?;
+    let entries = list_provider_entries(tree, root, &BTreeMap::new()).await?;
     let summary = provider_list_summary(&root.to_string(), &entries);
     Ok(ProviderRootReport {
         root_cid: root.to_string(),

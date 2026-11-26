@@ -5,6 +5,15 @@
 - Save to Iris Drive on iPhone and the Files apps on iPhone and Android show
   your folders right away after another device changes the Drive, without
   waiting for Iris Drive to sync in the background.
+- Large folders (such as photo libraries) open much faster in the Files app,
+  Share Sheet, and CLI, and folders with more than 174 items now sync reliably
+  across devices.
+- Opening, saving, importing, and scrubbing large videos and files streams data
+  chunk by chunk instead of loading the whole file into memory, preventing
+  out-of-memory failures on mobile and speeding up large transfers.
+- Syncing edits to Blossom storage skips unchanged blocks in a single batch
+  check and transfers blocks in parallel, making incremental syncs and initial
+  downloads much faster with far less upload traffic.
 
 ## 0.1.52 - 2026-11-25
 
