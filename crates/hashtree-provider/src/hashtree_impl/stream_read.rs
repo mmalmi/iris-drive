@@ -2,7 +2,7 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::StreamExt;
@@ -13,6 +13,18 @@ use crate::error::ProviderError;
 use crate::provider::Item;
 
 static STREAM_READ_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+// The read future can be dropped while waiting for a remote chunk. Keep the
+// cleanup owner outside the streaming future so its writer is closed first.
+struct PendingOutput(Option<PathBuf>);
+
+impl Drop for PendingOutput {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
 
 fn output_error(path: &Path, error: &io::Error) -> ProviderError {
     ProviderError::Backend(format!("writing {}: {error}", path.display()))
@@ -42,11 +54,17 @@ impl<S: Store> HashTreeProviderFs<S> {
             std::process::id(),
             counter
         ));
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options
             .open(&tmp_path)
             .map_err(|error| output_error(&tmp_path, &error))?;
+        let mut pending_output = PendingOutput(Some(tmp_path.clone()));
 
         let stream_result = async {
             let mut writer = BufWriter::new(file);
@@ -83,14 +101,12 @@ impl<S: Store> HashTreeProviderFs<S> {
                 let _ = fs::remove_file(output);
             }
             fs::rename(&tmp_path, output).map_err(|error| output_error(output, &error))?;
+            pending_output.0 = None;
             Ok(())
         }
         .await;
 
-        if let Err(error) = stream_result {
-            let _ = fs::remove_file(&tmp_path);
-            return Err(error);
-        }
+        stream_result?;
 
         let name = id.rsplit('/').next().unwrap_or("").to_string();
         Ok(Item {

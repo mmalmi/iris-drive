@@ -175,3 +175,90 @@ async fn stream_read_to_path_verifies_size_and_cleans_temp_files_on_error() {
         .count();
     assert_eq!(temp_leftovers, 0);
 }
+
+#[tokio::test]
+async fn cancelled_stream_read_removes_partial_plaintext_and_preserves_destination() {
+    use async_trait::async_trait;
+    use hashtree_core::{Hash, Store, StoreError};
+    use sha2::{Digest, Sha256};
+
+    struct PausingStore {
+        inner: MemoryStore,
+        pause_hash: Hash,
+        requested: tokio::sync::Notify,
+    }
+
+    #[async_trait]
+    impl Store for PausingStore {
+        async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
+            self.inner.put(hash, data).await
+        }
+        async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+            if *hash == self.pause_hash {
+                self.requested.notify_one();
+                std::future::pending::<()>().await;
+            }
+            self.inner.get(hash).await
+        }
+        async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
+            self.inner.has(hash).await
+        }
+        async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
+            self.inner.delete(hash).await
+        }
+    }
+
+    let second = vec![b'b'; 16 * 1024];
+    let store = Arc::new(PausingStore {
+        inner: MemoryStore::new(),
+        pause_hash: Sha256::digest(&second).into(),
+        requested: tokio::sync::Notify::new(),
+    });
+    let tree = Arc::new(HashTree::new(
+        HashTreeConfig::new(store.clone())
+            .public()
+            .with_chunk_size(16 * 1024),
+    ));
+    let mut payload = vec![b'a'; 16 * 1024];
+    payload.extend(second);
+    let (cid, size) = tree.put(&payload).await.unwrap();
+    let root = tree
+        .put_directory(vec![
+            DirEntry::from_cid("private.bin", &cid)
+                .with_size(size)
+                .with_link_type(hashtree_core::LinkType::File),
+        ])
+        .await
+        .unwrap();
+    let provider = HashTreeProviderFs::open(tree, root).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("output.bin");
+    std::fs::write(&output, b"existing destination").unwrap();
+    let mut read = Box::pin(provider.read_file_to_path("private.bin", &output));
+    tokio::select! {
+        result = &mut read => panic!("read completed before its second chunk: {result:?}"),
+        () = store.requested.notified() => {},
+        () = tokio::time::sleep(std::time::Duration::from_secs(5)) => panic!("second chunk was not requested"),
+    }
+    assert!(std::fs::read_dir(dir.path()).unwrap().count() > 1);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for entry in std::fs::read_dir(dir.path()).unwrap().map(Result::unwrap) {
+            if entry.path() != output {
+                assert_eq!(
+                    entry.metadata().unwrap().permissions().mode() & 0o077,
+                    0,
+                    "partial plaintext must be private to its owner"
+                );
+            }
+        }
+    }
+    drop(read);
+    assert_eq!(std::fs::read(&output).unwrap(), b"existing destination");
+    assert_eq!(
+        std::fs::read_dir(dir.path()).unwrap().count(),
+        1,
+        "cancelling a read must remove its partial plaintext temporary file"
+    );
+}

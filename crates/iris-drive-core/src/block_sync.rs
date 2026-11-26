@@ -8,7 +8,7 @@ use std::collections::{HashSet, VecDeque};
 
 use futures::stream::{FuturesUnordered, StreamExt};
 use hashtree_core::{
-    Cid, DEFAULT_CHUNK_SIZE, Hash, HashTree, HashTreeError, Link, LinkType, Store, TreeNode,
+    Cid, EncryptionMode, Hash, HashTree, HashTreeError, Link, LinkType, Store, TreeNode,
     decode_tree_node, decrypt_object, is_tree_node,
 };
 
@@ -43,8 +43,9 @@ pub async fn collect_live_sync_hashes<S: Store>(
     collect_live_sync_hashes_inner(tree, root, concurrency, true).await
 }
 
-/// Collect live-sync block hashes without reading or decrypting raw leaf data
-/// blobs (`LinkType::Blob`).
+/// Collect live-sync block hashes using local size metadata to avoid reading
+/// or decrypting raw leaf data blobs. Legacy Blob links can also point to file
+/// nodes, so the declared plaintext size alone cannot prove a link is a leaf.
 ///
 /// Use for local-store traversals (Blossom uploads, backup checks, local block
 /// availability probes) where callers check or stream the returned hashes
@@ -74,11 +75,11 @@ async fn collect_live_sync_hashes_inner<S: Store>(
     let mut pending = VecDeque::new();
     let mut active = FuturesUnordered::new();
 
-    pending.push_back((root.hash, root.key, WalkKind::RootDir));
+    pending.push_back((root.hash, root.key, WalkKind::RootDir, None));
 
     loop {
         while active.len() < concurrency {
-            let Some((hash, key, kind)) = pending.pop_front() else {
+            let Some((hash, key, kind, leaf_stored_size)) = pending.pop_front() else {
                 break;
             };
             hashes.insert(hash);
@@ -87,6 +88,15 @@ async fn collect_live_sync_hashes_inner<S: Store>(
             }
             let store = &store;
             active.push(async move {
+                if let Some(expected_size) = leaf_stored_size {
+                    let stored_size = store
+                        .blob_size(&hash)
+                        .await
+                        .map_err(|e| HashTreeError::Store(e.to_string()))?;
+                    if stored_size == Some(expected_size) {
+                        return Ok::<_, HashTreeError>((key, kind, None));
+                    }
+                }
                 let data = store
                     .get(&hash)
                     .await
@@ -119,16 +129,23 @@ async fn collect_live_sync_hashes_inner<S: Store>(
             else {
                 continue;
             };
-            if !read_leaf_blobs
+            let leaf_stored_size = if !read_leaf_blobs
                 && child_kind == WalkKind::Content
                 && link.link_type == LinkType::Blob
-                && (node.node_type == LinkType::File || link.size <= DEFAULT_CHUNK_SIZE as u64)
             {
-                hashes.insert(link.hash);
-                continue;
-            }
+                let overhead = match link.key.map(|key| key.mode()) {
+                    None => 0,
+                    Some(EncryptionMode::LegacyChk | EncryptionMode::ChkV1) => {
+                        hashtree_core::crypto::encrypted_size_chk(0) as u64
+                    }
+                    Some(EncryptionMode::RndV1) => hashtree_core::crypto::encrypted_size(0) as u64,
+                };
+                link.size.checked_add(overhead)
+            } else {
+                None
+            };
             if !visited.contains(&(link.hash, child_kind)) {
-                pending.push_back((link.hash, link.key, child_kind));
+                pending.push_back((link.hash, link.key, child_kind, leaf_stored_size));
             }
         }
     }
@@ -267,7 +284,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use hashtree_core::{DirEntry, HashTreeConfig, LinkType, MemoryStore, StoreError};
+    use hashtree_core::{
+        DEFAULT_CHUNK_SIZE, DirEntry, HashTreeConfig, LinkType, MemoryStore, StoreError,
+    };
 
     struct RecordingStore {
         inner: Arc<MemoryStore>,
@@ -302,9 +321,49 @@ mod tests {
             self.inner.has(hash).await
         }
 
+        async fn blob_size(&self, hash: &Hash) -> Result<Option<u64>, StoreError> {
+            self.inner.blob_size(hash).await
+        }
+
         async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
             self.inner.delete(hash).await
         }
+    }
+
+    #[tokio::test]
+    async fn live_sync_preserves_small_legacy_blob_linked_chunked_files() {
+        let store = Arc::new(MemoryStore::new());
+        let tree = HashTree::new(HashTreeConfig::new(store.clone()).with_chunk_size(1024));
+        let payload: Vec<u8> = (0..3073).map(|i| (i % 251) as u8).collect();
+        let (file, size) = tree.put(&payload).await.unwrap();
+        // Legacy directories label chunked files as Blob even when the writer
+        // used a smaller chunk size than today's default.
+        let root = tree
+            .put_directory(vec![
+                DirEntry::from_cid("legacy.bin", &file)
+                    .with_size(size)
+                    .with_link_type(LinkType::Blob),
+            ])
+            .await
+            .unwrap();
+        let hashes = collect_live_sync_hashes_without_leaf_reads(&tree, &root, 8)
+            .await
+            .unwrap();
+        let expected = collect_live_sync_hashes(&tree, &root, 8).await.unwrap();
+        assert_eq!(
+            hashes, expected,
+            "local-only traversal must retain legacy file children"
+        );
+        let destination = Arc::new(MemoryStore::new());
+        for hash in hashes {
+            destination
+                .put(hash, store.get(&hash).await.unwrap().unwrap())
+                .await
+                .unwrap();
+        }
+        let reader = HashTree::new(HashTreeConfig::new(destination));
+        let resolved = reader.resolve(&root, "legacy.bin").await.unwrap().unwrap();
+        assert_eq!(reader.get(&resolved, None).await.unwrap().unwrap(), payload);
     }
 
     #[tokio::test]
