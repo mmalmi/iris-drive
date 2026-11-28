@@ -9,7 +9,7 @@ use std::collections::{HashSet, VecDeque};
 use futures::stream::{FuturesUnordered, StreamExt};
 use hashtree_core::{
     Cid, EncryptionMode, Hash, HashTree, HashTreeError, Link, LinkType, Store, TreeNode,
-    decode_tree_node, decrypt_object, is_tree_node,
+    decode_tree_node_by_cid, decrypt_object, try_decode_tree_node,
 };
 
 use crate::indexer::should_ignore_name;
@@ -25,7 +25,9 @@ enum WalkKind {
     RootDir,
     UserDir,
     MetaDir,
+    MetaSubdir,
     Content,
+    FileChunk(u64),
 }
 
 /// Collect blocks needed to read the current root.
@@ -69,88 +71,140 @@ async fn collect_live_sync_hashes_inner<S: Store>(
     let prev_name = PREV_LINK_PATH
         .rsplit_once('/')
         .map_or(PREV_LINK_PATH, |(_, name)| name);
-    let store = tree.get_store();
     let mut hashes = HashSet::new();
     let mut visited = HashSet::new();
-    let mut pending = VecDeque::new();
+    let mut pending = VecDeque::from([(root.clone(), WalkKind::RootDir, None)]);
     let mut active = FuturesUnordered::new();
-
-    pending.push_back((root.hash, root.key, WalkKind::RootDir, None));
 
     loop {
         while active.len() < concurrency {
-            let Some((hash, key, kind, leaf_stored_size)) = pending.pop_front() else {
+            let Some((cid, kind, leaf_stored_size)) = pending.pop_front() else {
                 break;
             };
-            hashes.insert(hash);
-            if !visited.insert((hash, kind)) {
+            hashes.insert(cid.hash);
+            if !visited.insert((cid.hash, cid.key, kind)) {
                 continue;
             }
-            let store = &store;
             active.push(async move {
-                if let Some(expected_size) = leaf_stored_size {
-                    let stored_size = store
-                        .blob_size(&hash)
-                        .await
-                        .map_err(|e| HashTreeError::Store(e.to_string()))?;
-                    if stored_size == Some(expected_size) {
-                        return Ok::<_, HashTreeError>((key, kind, None));
-                    }
-                }
-                let data = store
-                    .get(&hash)
-                    .await
-                    .map_err(|e| HashTreeError::Store(e.to_string()))?;
-                Ok::<_, HashTreeError>((key, kind, data))
+                let node =
+                    load_live_node(tree, &cid, kind, leaf_stored_size, read_leaf_blobs).await?;
+                Ok::<_, HashTreeError>((cid, kind, node))
             });
         }
 
         let Some(result) = active.next().await else {
             break;
         };
-        let (key, kind, Some(data)) = result? else {
+        let (cid, kind, Some(node)) = result? else {
             continue;
         };
-        let plaintext = if let Some(key) = key {
-            decrypt_object(&data, &key).map_err(|e| HashTreeError::Decryption(e.to_string()))?
-        } else {
-            data
-        };
-        if !is_tree_node(&plaintext) {
-            continue;
-        }
-        let Ok(node) = decode_tree_node(&plaintext) else {
-            continue;
-        };
-
-        let legacy_fanout = is_legacy_directory_fanout(&node);
-        for link in &node.links {
-            let Some(child_kind) = classify_link(&node, link, kind, legacy_fanout, prev_name)
-            else {
-                continue;
-            };
-            let leaf_stored_size = if !read_leaf_blobs
-                && child_kind == WalkKind::Content
-                && link.link_type == LinkType::Blob
+        pending.extend(live_children(&node, kind, prev_name));
+        if kind.is_directory() && node.node_type == LinkType::File {
+            // Historical directories split the encoded listing into file chunks.
+            // The chunks above and the entries in the assembled listing are both live.
+            if let Some(listing) = tree.get_directory_node(&cid).await?
+                && listing.node_type.is_directory_like()
             {
-                let overhead = match link.key.map(|key| key.mode()) {
-                    None => 0,
-                    Some(EncryptionMode::LegacyChk | EncryptionMode::ChkV1) => {
-                        hashtree_core::crypto::encrypted_size_chk(0) as u64
-                    }
-                    Some(EncryptionMode::RndV1) => hashtree_core::crypto::encrypted_size(0) as u64,
-                };
-                link.size.checked_add(overhead)
-            } else {
-                None
-            };
-            if !visited.contains(&(link.hash, child_kind)) {
-                pending.push_back((link.hash, link.key, child_kind, leaf_stored_size));
+                pending.extend(live_children(&listing, kind, prev_name));
             }
         }
     }
-
     Ok(hashes)
+}
+
+impl WalkKind {
+    fn is_directory(self) -> bool {
+        matches!(
+            self,
+            Self::RootDir | Self::UserDir | Self::MetaDir | Self::MetaSubdir
+        )
+    }
+}
+
+async fn load_live_node<S: Store>(
+    tree: &HashTree<S>,
+    cid: &Cid,
+    kind: WalkKind,
+    leaf_stored_size: Option<u64>,
+    read_leaf_blobs: bool,
+) -> Result<Option<TreeNode>, HashTreeError> {
+    let store = tree.get_store();
+    if !read_leaf_blobs && let Some(size) = leaf_stored_size {
+        let actual = store
+            .blob_size(&cid.hash)
+            .await
+            .map_err(|e| HashTreeError::Store(e.to_string()))?;
+        if actual == Some(size) {
+            return Ok(None);
+        }
+    }
+    let Some(data) = store
+        .get(&cid.hash)
+        .await
+        .map_err(|e| HashTreeError::Store(e.to_string()))?
+    else {
+        return Ok(None);
+    };
+    if let WalkKind::FileChunk(size) = kind {
+        // For links inside a file, Hashtree reads equal-length Blob children as
+        // literal bytes, even if those bytes happen to encode another tree.
+        let bytes = match cid.key {
+            Some(key) => {
+                decrypt_object(&data, &key).map_err(|e| HashTreeError::Decryption(e.to_string()))?
+            }
+            None => data,
+        };
+        return Ok(if size == bytes.len() as u64 {
+            None
+        } else {
+            try_decode_tree_node(&bytes).filter(|node| node.node_type == LinkType::File)
+        });
+    }
+    decode_tree_node_by_cid(cid, data)
+}
+
+fn live_children<'a>(
+    node: &'a TreeNode,
+    kind: WalkKind,
+    prev_name: &'a str,
+) -> impl Iterator<Item = (Cid, WalkKind, Option<u64>)> + 'a {
+    let legacy_fanout = is_legacy_directory_fanout(node);
+    node.links.iter().filter_map(move |link| {
+        let child_kind = classify_link(node, link, kind, legacy_fanout, prev_name)?;
+        // A named Blob starts a file, so it may be a legacy manifest even when
+        // its encoded length equals its payload length. Any manifest with a
+        // child contains at least the child's complete hash.
+        let leaf_stored_size = if link.link_type == LinkType::Blob {
+            let mode = link.key.map(|key| key.mode());
+            let overhead = match mode {
+                None => 0,
+                Some(EncryptionMode::LegacyChk | EncryptionMode::ChkV1) => {
+                    hashtree_core::crypto::encrypted_size_chk(0) as u64
+                }
+                Some(EncryptionMode::RndV1) => hashtree_core::crypto::encrypted_size(0) as u64,
+            };
+            link.size.checked_add(overhead).filter(|stored| {
+                // Historical named manifests can be plaintext despite a legacy key.
+                let max_plaintext = if mode == Some(EncryptionMode::LegacyChk) {
+                    *stored
+                } else {
+                    link.size
+                };
+                matches!(child_kind, WalkKind::FileChunk(_))
+                    || max_plaintext < std::mem::size_of::<Hash>() as u64
+            })
+        } else {
+            None
+        };
+        Some((
+            Cid {
+                hash: link.hash,
+                key: link.key,
+            },
+            child_kind,
+            leaf_stored_size,
+        ))
+    })
 }
 
 fn classify_link(
@@ -161,19 +215,19 @@ fn classify_link(
     prev_name: &str,
 ) -> Option<WalkKind> {
     if node.node_type == LinkType::File {
-        return Some(WalkKind::Content);
+        return Some(if link.link_type == LinkType::Blob {
+            WalkKind::FileChunk(link.size)
+        } else {
+            WalkKind::Content
+        });
     }
-    if matches!(
-        kind,
-        WalkKind::RootDir | WalkKind::UserDir | WalkKind::MetaDir
-    ) && is_internal_directory_link(node, link, legacy_fanout)
-    {
+    if kind.is_directory() && is_internal_directory_link(node, link, legacy_fanout) {
         return Some(kind);
     }
     let is_dir = matches!(link.link_type, LinkType::Dir | LinkType::Fanout);
     match kind {
         WalkKind::RootDir => {
-            let name = link.name.as_deref()?;
+            let name = link.name.as_deref().unwrap_or_default();
             if name == META_DIR {
                 Some(if is_dir {
                     WalkKind::MetaDir
@@ -189,7 +243,7 @@ fn classify_link(
             }
         }
         WalkKind::UserDir => {
-            let name = link.name.as_deref()?;
+            let name = link.name.as_deref().unwrap_or_default();
             if should_ignore_name(name) {
                 None
             } else if is_dir {
@@ -199,14 +253,19 @@ fn classify_link(
             }
         }
         WalkKind::MetaDir => {
-            let name = link.name.as_deref()?;
+            let name = link.name.as_deref().unwrap_or_default();
             if name == prev_name {
                 None
+            } else if is_dir {
+                Some(WalkKind::MetaSubdir)
             } else {
                 Some(WalkKind::Content)
             }
         }
-        WalkKind::Content => Some(WalkKind::Content),
+        WalkKind::MetaSubdir if is_dir => Some(WalkKind::MetaSubdir),
+        WalkKind::Content | WalkKind::FileChunk(_) | WalkKind::MetaSubdir => {
+            Some(WalkKind::Content)
+        }
     }
 }
 
@@ -334,7 +393,7 @@ mod tests {
     async fn live_sync_preserves_small_legacy_blob_linked_chunked_files() {
         let store = Arc::new(MemoryStore::new());
         let tree = HashTree::new(HashTreeConfig::new(store.clone()).with_chunk_size(1024));
-        let payload: Vec<u8> = (0..3073).map(|i| (i % 251) as u8).collect();
+        let payload: Vec<u8> = (0u8..251).cycle().take(3073).collect();
         let (file, size) = tree.put(&payload).await.unwrap();
         // Legacy directories label chunked files as Blob even when the writer
         // used a smaller chunk size than today's default.
@@ -489,3 +548,6 @@ mod tests {
         assert!(!gets.contains(&small_cid.hash));
     }
 }
+
+#[cfg(test)]
+mod legacy_tests;

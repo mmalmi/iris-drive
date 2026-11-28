@@ -142,6 +142,8 @@ async fn stream_read_to_path_verifies_size_and_cleans_temp_files_on_error() {
 
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("nested/video.bin");
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    std::fs::write(&out, b"old video").unwrap();
     let item = provider.read_file_to_path("video.bin", &out).await.unwrap();
     assert_eq!(item.size, size);
     assert_eq!(std::fs::read(&out).unwrap(), payload);
@@ -163,11 +165,12 @@ async fn stream_read_to_path_verifies_size_and_cleans_temp_files_on_error() {
     assert!(!missing_out.exists());
 
     let bad_out = dir.path().join("bad.bin");
+    std::fs::write(&bad_out, b"previous contents").unwrap();
     assert!(matches!(
         provider.read_file_to_path("bad-size.bin", &bad_out).await,
         Err(ProviderError::Backend(_))
     ));
-    assert!(!bad_out.exists());
+    assert_eq!(std::fs::read(&bad_out).unwrap(), b"previous contents");
     let temp_leftovers = std::fs::read_dir(dir.path())
         .unwrap()
         .filter_map(Result::ok)

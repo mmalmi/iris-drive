@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::StreamExt;
-use hashtree_core::{LinkType, Store};
+use hashtree_core::{HashTreeError, LinkType, Store};
 
 use super::{HashTreeProviderFs, kind_from_link, map_err, modified_at_from_meta};
 use crate::error::ProviderError;
@@ -72,7 +72,10 @@ impl<S: Store> HashTreeProviderFs<S> {
             let mut saw_chunk = false;
             let mut written = 0u64;
             while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(map_err)?;
+                let chunk = chunk.map_err(|error| match error {
+                    HashTreeError::MissingChunk(_) => ProviderError::NotFound,
+                    other => map_err(other),
+                })?;
                 saw_chunk = true;
                 written = written.saturating_add(chunk.len() as u64);
                 if written > resolved.size {
@@ -96,10 +99,6 @@ impl<S: Store> HashTreeProviderFs<S> {
                 .flush()
                 .map_err(|error| output_error(&tmp_path, &error))?;
             drop(writer);
-            #[cfg(windows)]
-            if output.exists() {
-                let _ = fs::remove_file(output);
-            }
             fs::rename(&tmp_path, output).map_err(|error| output_error(output, &error))?;
             pending_output.0 = None;
             Ok(())

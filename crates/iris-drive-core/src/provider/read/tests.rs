@@ -133,3 +133,21 @@ async fn streaming_read_to_path_downloads_missing_bytes_and_writes_atomically() 
     assert_eq!(std::fs::read(&out).unwrap(), CONTENT);
     assert!(service.requests() > 0);
 }
+
+#[tokio::test]
+async fn an_unwritable_destination_preserves_the_local_error_and_skips_download() {
+    let (dir, blocks) = drive_listing_a_file_without_its_bytes().await;
+    let service = file_service(blocks).await;
+    use_file_service(&dir, &service.url);
+    let daemon = Daemon::open(dir.path()).unwrap();
+    let provider = provider_in(&daemon).await;
+    let parent = dir.path().join("existing-file");
+    std::fs::write(&parent, b"original").unwrap();
+
+    let error = super::read_provider_file_to_path(dir.path(), &provider, NAME, &parent.join(NAME))
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("writing"));
+    assert_eq!(std::fs::read(parent).unwrap(), b"original");
+    assert_eq!(service.requests(), 0);
+}

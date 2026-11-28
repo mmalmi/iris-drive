@@ -51,10 +51,10 @@ impl ReleaseHeads {
     }
 
     fn query(&self, filters: &[Filter], options: QueryOptions) -> Vec<VerifiedEvent> {
-        self.heads
-            .lock()
-            .map(|heads| heads.query(filters, options, Timestamp::now().as_secs()))
-            .unwrap_or_default()
+        self.heads.lock().map_or_else(
+            |_| Vec::new(),
+            |heads| heads.query(filters, options, Timestamp::now().as_secs()),
+        )
     }
 }
 

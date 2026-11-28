@@ -48,7 +48,8 @@ where
     let unread = match provider.read_file_to_path(path, output).await {
         Ok(item) => return Ok(item),
         Err(ProviderError::IsDir) => anyhow::bail!("cannot read directory: {path}"),
-        Err(error) => error,
+        Err(error @ ProviderError::NotFound) => error,
+        Err(error) => return Err(error.into()),
     };
     let item = provider.item(&path.to_owned()).await?;
     download_missing_provider_file(config_dir, path, &item.version, unread).await?;

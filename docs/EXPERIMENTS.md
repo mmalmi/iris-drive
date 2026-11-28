@@ -921,3 +921,11 @@ Reproducible probes:
 - Note: initial Blossom numbers are measured against a real loopback HTTP server
   with fixed 20 ms per-request RTT; real WAN latency and bandwidth variance will
   scale proportionally with RTT and concurrency (8).
+
+The November 26 measurements above used the workloads and builds listed in the
+table. The later compatibility review found that a directory can name a chunked
+file as a Blob even when its encoded manifest and file content have the same
+length. Local sync now inspects those ambiguous named blocks. File chunks with
+matching sizes still use the metadata-only check. Upload checks also limit each
+batch to 10,000 hashes. The original timing and memory figures apply to the
+measured builds. Platform performance qualification for the revised walk is open.

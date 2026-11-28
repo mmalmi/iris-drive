@@ -38,6 +38,8 @@ use crate::block_sync::{
 /// Publishes that already fit in a single concurrent upload wave upload directly
 /// without paying an extra round-trip.
 const UPLOAD_BATCH_CHECK_THRESHOLD: usize = LIVE_SYNC_BLOCK_CONCURRENCY + 1;
+// The pinned Blossom client accepts up to 10,000 hashes per wire request.
+const UPLOAD_CHECK_BATCH_SIZE: usize = 10_000;
 
 #[derive(Debug, Error)]
 pub enum BlossomSyncError {
@@ -117,9 +119,20 @@ where
         total_hashes: hashes.len(),
         ..Default::default()
     };
-    let store = tree.get_store();
-    let mut remaining: Vec<Hash> = hashes.into_iter().collect();
+    let mut hashes = hashes.into_iter();
+    while hashes.len() > 0 {
+        let batch = hashes.by_ref().take(UPLOAD_CHECK_BATCH_SIZE).collect();
+        upload_batch(tree.get_store().as_ref(), client, batch, &mut report).await?;
+    }
+    Ok(report)
+}
 
+async fn upload_batch<S: Store>(
+    store: &S,
+    client: &BlossomClient,
+    mut remaining: Vec<Hash>,
+    report: &mut UploadReport,
+) -> Result<(), BlossomSyncError> {
     if remaining.len() >= UPLOAD_BATCH_CHECK_THRESHOLD {
         let mut present_hashes = Vec::new();
         for server in client.write_servers() {
@@ -153,7 +166,6 @@ where
         }
     }
 
-    let store = &store;
     let mut uploads = stream::iter(remaining)
         .map(|hash| async move {
             let bytes = store
@@ -176,7 +188,7 @@ where
             report.already_present += 1;
         }
     }
-    Ok(report)
+    Ok(())
 }
 
 /// Check one Blossom server for a deterministic sample of live-sync blocks.
