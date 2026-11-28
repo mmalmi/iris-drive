@@ -111,7 +111,7 @@ where
         total_hashes: hashes.len(),
         ..Default::default()
     };
-    let store = tree.get_store();
+    let store = &tree.get_store();
     let mut uploads = stream::iter(hashes)
         .map(|hash| async move {
             let bytes = store

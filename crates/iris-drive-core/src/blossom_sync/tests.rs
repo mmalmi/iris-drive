@@ -485,9 +485,10 @@ async fn backup_claims_cached_blocks_before_eviction_and_restores_every_file() {
         .filter(|hash| server_store.is_blob_owner(hash, &owner).unwrap())
         .count();
     assert_eq!(report.total_hashes, live.len());
-    for n in 0u8..32 {
-        server_store.put_cached_blob(&vec![n; 64 * 1024]).unwrap();
-    }
+    // Use the store's quota eviction directly so the test observes completion
+    // of one ordinary disposable-cache sweep, without racing repeated inserts.
+    let evicted = server_store.make_room_for_cached_blob(1024 * 1024).unwrap();
+    assert!(evicted > 0);
     assert!(!server_store.blob_exists(&sha256(control)).unwrap());
     let fresh = Arc::new(MemoryStore::new());
     let restored = download_tree(fresh.clone(), &root, client).await;
