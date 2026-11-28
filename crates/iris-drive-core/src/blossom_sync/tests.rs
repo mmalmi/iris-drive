@@ -480,7 +480,7 @@ async fn backup_claims_cached_blocks_before_eviction_and_restores_every_file() {
     server_store.put_cached_blob(control).unwrap();
 
     let report = upload_tree(&tree, &root, &client).await.unwrap();
-    let owned = live
+    let claimed_block_count = live
         .iter()
         .filter(|hash| server_store.is_blob_owner(hash, &owner).unwrap())
         .count();
@@ -496,10 +496,10 @@ async fn backup_claims_cached_blocks_before_eviction_and_restores_every_file() {
     task.await.unwrap().unwrap();
     assert!(
         restored.is_ok(),
-        "restoring after eviction with {owned}/{} blocks owned: {restored:?}",
+        "restoring after eviction with {claimed_block_count}/{} blocks owned: {restored:?}",
         live.len()
     );
-    assert_eq!(owned, live.len());
+    assert_eq!(claimed_block_count, live.len());
     assert!(
         live.iter()
             .all(|hash| server_store.is_blob_owner(hash, &owner).unwrap())
