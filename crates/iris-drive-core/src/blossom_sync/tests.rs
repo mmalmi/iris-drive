@@ -276,7 +276,7 @@ async fn blossom_tree_sync_scaling_probe() {
 }
 
 #[tokio::test]
-async fn upload_tree_uses_upload_check_and_skips_present_blocks() {
+async fn upload_tree_renews_existing_blocks_and_reports_new_content() {
     let store = Arc::new(MemoryStore::new());
     let tree = HashTree::new(HashTreeConfig::new(store.clone()));
 
@@ -307,11 +307,11 @@ async fn upload_tree_uses_upload_check_and_skips_present_blocks() {
     server.reset_counts();
     let incr = upload_tree(&tree, &root2, &client).await.unwrap();
     let (checks, heads, puts, _, _) = server.counts();
-    assert_eq!(checks, 1, "should batch-check all hashes in one request");
+    assert_eq!(checks, 0, "an existence check cannot establish ownership");
     assert_eq!(heads, 0);
     assert_eq!(
-        puts, incr.uploaded,
-        "only newly added/changed blocks should be PUT"
+        puts, incr.total_hashes,
+        "all live blocks must be submitted with the backup identity"
     );
     assert!(
         incr.uploaded < 6,
@@ -320,7 +320,7 @@ async fn upload_tree_uses_upload_check_and_skips_present_blocks() {
     );
     assert!(incr.already_present >= 9);
 
-    // Deleting a confirmed-present leaf blob locally must still report MissingLocally.
+    // A remote copy must not hide a missing local source block.
     let entries = tree.list_directory(&root2).await.unwrap();
     let leaf = entries
         .iter()
@@ -426,4 +426,93 @@ async fn upload_tree_succeeds_without_upload_check_endpoint() {
     let dest_store = Arc::new(MemoryStore::new());
     let dl = download_tree(dest_store, &root, client).await.unwrap();
     assert_eq!(dl.fetched, report.total_hashes);
+}
+
+#[tokio::test]
+async fn backup_claims_cached_blocks_before_eviction_and_restores_every_file() {
+    use hashtree_cli::{HashtreeServer, HashtreeStore};
+    use hashtree_config::StorageBackend;
+    use hashtree_core::DirEntry;
+
+    let keys = Keys::generate();
+    let owner = keys.public_key().to_bytes();
+    let dir = tempfile::tempdir().unwrap();
+    let server_store = Arc::new(
+        HashtreeStore::with_options_and_backend(
+            dir.path(),
+            None,
+            1024 * 1024,
+            true,
+            &StorageBackend::Fs,
+        )
+        .unwrap(),
+    );
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = HashtreeServer::new(server_store.clone(), addr.to_string())
+        .with_public_writes(false)
+        .with_allowed_pubkeys([keys.public_key().to_hex()].into_iter().collect());
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(server.run_with_listener_until(listener, async {
+        let _ = stopped.await;
+    }));
+    let url = format!("http://{addr}");
+    let client = crate::blossom_sync_client(keys, std::slice::from_ref(&url));
+
+    let local = Arc::new(MemoryStore::new());
+    let tree = HashTree::new(HashTreeConfig::new(local.clone()));
+    let files: Vec<Vec<u8>> = (0u8..10)
+        .map(|n| vec![n; if n == 0 { 300 * 1024 } else { 80 }])
+        .collect();
+    let mut entries = Vec::new();
+    for (i, bytes) in files.iter().enumerate() {
+        let (cid, size) = tree.put(bytes).await.unwrap();
+        let stored = local.get(&cid.hash).await.unwrap().unwrap();
+        server_store.put_cached_blob(&stored).unwrap();
+        assert!(!server_store.is_blob_owner(&cid.hash, &owner).unwrap());
+        entries.push(DirEntry::from_cid(i.to_string(), &cid).with_size(size));
+    }
+    let root = tree.put_directory(entries).await.unwrap();
+    let live = collect_live_sync_hashes(&tree, &root, 4).await.unwrap();
+    let control = b"cache-only eviction witness";
+    server_store.put_cached_blob(control).unwrap();
+
+    let report = upload_tree(&tree, &root, &client).await.unwrap();
+    let owned = live
+        .iter()
+        .filter(|hash| server_store.is_blob_owner(hash, &owner).unwrap())
+        .count();
+    assert_eq!(report.total_hashes, live.len());
+    for n in 0u8..32 {
+        server_store.put_cached_blob(&vec![n; 64 * 1024]).unwrap();
+    }
+    assert!(!server_store.blob_exists(&sha256(control)).unwrap());
+    let fresh = Arc::new(MemoryStore::new());
+    let restored = download_tree(fresh.clone(), &root, client).await;
+    let _ = stop.send(());
+    task.await.unwrap().unwrap();
+    assert!(
+        restored.is_ok(),
+        "restoring after eviction with {owned}/{} blocks owned: {restored:?}",
+        live.len()
+    );
+    assert_eq!(owned, live.len());
+    assert!(
+        live.iter()
+            .all(|hash| server_store.is_blob_owner(hash, &owner).unwrap())
+    );
+    let reader = HashTree::new(HashTreeConfig::new(fresh));
+    for (i, expected) in files.iter().enumerate() {
+        let cid = reader
+            .resolve(&root, &i.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reader.get(&cid, None).await.unwrap().as_ref(),
+            Some(expected)
+        );
+    }
 }

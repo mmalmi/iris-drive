@@ -926,6 +926,10 @@ The November 26 measurements above used the workloads and builds listed in the
 table. The later compatibility review found that a directory can name a chunked
 file as a Blob even when its encoded manifest and file content have the same
 length. Local sync now inspects those ambiguous named blocks. File chunks with
-matching sizes still use the metadata-only check. Upload checks also limit each
-batch to 10,000 hashes. The original timing and memory figures apply to the
-measured builds. Platform performance qualification for the revised walk is open.
+matching sizes still use the metadata-only check. The client used in the experiment already split HTTP presence checks at
+10,000 hashes. Those checks can see disposable cached content. Drive now
+submits signed uploads for every backup block so an authorized account can
+establish ownership. This also removes the older large-block HEAD shortcut
+from this path. The table records the earlier implementation; its incremental
+upload traffic and timing figures do not apply to signed uploads of all blocks.
+Platform performance qualification for the revised paths is open.

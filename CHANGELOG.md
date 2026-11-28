@@ -10,9 +10,9 @@
   across devices.
 - Opening, saving, importing, and scrubbing large videos and files streams data
   chunk by chunk, reducing how much memory these operations need.
-- Syncing edits to Blossom storage checks for unchanged blocks in batches and
-  transfers blocks in parallel, making incremental syncs and initial
-  downloads much faster with far less upload traffic.
+- Blossom backups submit blocks in parallel with the backup identity. This
+  lets a server that grants the account durable storage retain files it
+  previously held only in its disposable cache.
 
 ## 0.1.52 - 2026-11-25
 

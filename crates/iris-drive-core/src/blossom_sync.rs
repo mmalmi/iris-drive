@@ -10,7 +10,7 @@
 //!
 //! - **Upload** (after a local publish): walk the live-sync tree from a
 //!   root CID, collect every current hash, push each blob to the
-//!   configured write servers via `BlossomClient::upload_if_missing`.
+//!   configured write servers with signed upload requests.
 //! - **Download** (after a remote drive-root event): walk the same
 //!   tree, but through a [`WriteBackBlossomStore`] that reads from
 //!   Blossom on local-store miss and persists the fetched bytes back
@@ -33,13 +33,6 @@ use crate::block_sync::{
     LIVE_SYNC_BLOCK_CONCURRENCY, collect_live_sync_hashes,
     collect_live_sync_hashes_without_leaf_reads,
 };
-
-/// Minimum number of blocks before issuing a batch `POST /upload/check` call.
-/// Publishes that already fit in a single concurrent upload wave upload directly
-/// without paying an extra round-trip.
-const UPLOAD_BATCH_CHECK_THRESHOLD: usize = LIVE_SYNC_BLOCK_CONCURRENCY + 1;
-// The pinned Blossom client accepts up to 10,000 hashes per wire request.
-const UPLOAD_CHECK_BATCH_SIZE: usize = 10_000;
 
 #[derive(Debug, Error)]
 pub enum BlossomSyncError {
@@ -98,9 +91,8 @@ impl BackupCheckReport {
 /// Walk the local tree rooted at `root` and upload every live-sync block to the
 /// configured Blossom write servers.
 ///
-/// Uses batch `POST /upload/check` when a write server supports it to skip
-/// reading or re-uploading already-present blocks, then uploads missing blocks
-/// concurrently with bounded in-flight work.
+/// Submit each block with the backup identity, including blocks already cached
+/// by a server. Presence alone does not establish retention for this identity.
 pub async fn upload_tree<S>(
     tree: &HashTree<S>,
     root: &Cid,
@@ -119,65 +111,28 @@ where
         total_hashes: hashes.len(),
         ..Default::default()
     };
-    let mut hashes = hashes.into_iter();
-    while hashes.len() > 0 {
-        let batch = hashes.by_ref().take(UPLOAD_CHECK_BATCH_SIZE).collect();
-        upload_batch(tree.get_store().as_ref(), client, batch, &mut report).await?;
-    }
-    Ok(report)
-}
-
-async fn upload_batch<S: Store>(
-    store: &S,
-    client: &BlossomClient,
-    mut remaining: Vec<Hash>,
-    report: &mut UploadReport,
-) -> Result<(), BlossomSyncError> {
-    if remaining.len() >= UPLOAD_BATCH_CHECK_THRESHOLD {
-        let mut present_hashes = Vec::new();
-        for server in client.write_servers() {
-            if remaining.len() < UPLOAD_BATCH_CHECK_THRESHOLD {
-                break;
-            }
-            let hex_hashes: Vec<String> = remaining.iter().map(to_hex).collect();
-            let Some(present) = client.check_uploads_on_server(&hex_hashes, server).await else {
-                continue;
-            };
-            let mut still_missing =
-                Vec::with_capacity(remaining.len().saturating_sub(present.len()));
-            for (hash, hex) in remaining.into_iter().zip(hex_hashes) {
-                if present.contains(&hex) {
-                    present_hashes.push(hash);
-                } else {
-                    still_missing.push(hash);
-                }
-            }
-            remaining = still_missing;
-        }
-        for hash in present_hashes {
-            if !store
-                .has(&hash)
-                .await
-                .map_err(|e| BlossomSyncError::LocalStore(e.to_string()))?
-            {
-                return Err(BlossomSyncError::MissingLocally(to_hex(&hash)));
-            }
-            report.already_present += 1;
-        }
-    }
-
-    let mut uploads = stream::iter(remaining)
+    let store = tree.get_store();
+    let mut uploads = stream::iter(hashes)
         .map(|hash| async move {
             let bytes = store
                 .get(&hash)
                 .await
                 .map_err(|e| BlossomSyncError::LocalStore(e.to_string()))?
                 .ok_or_else(|| BlossomSyncError::MissingLocally(to_hex(&hash)))?;
-            let (_, uploaded) = client
-                .upload_if_missing(&bytes)
-                .await
-                .map_err(|e| BlossomSyncError::Blossom(e.to_string()))?;
-            Ok::<bool, BlossomSyncError>(uploaded)
+            // A signed PUT allows an authorized writer to claim a cached block.
+            // Try configured destinations in order, with at most one per block
+            // in flight, and keep the client's ordinary signed-upload retries.
+            let mut failure = BlossomSyncError::NoServers;
+            for server in client.write_servers() {
+                match client
+                    .upload_to_any_selected_server(&bytes, std::slice::from_ref(server))
+                    .await
+                {
+                    Ok((_, uploaded)) => return Ok(uploaded),
+                    Err(error) => failure = BlossomSyncError::Blossom(error.to_string()),
+                }
+            }
+            Err(failure)
         })
         .buffer_unordered(LIVE_SYNC_BLOCK_CONCURRENCY);
 
@@ -188,7 +143,7 @@ async fn upload_batch<S: Store>(
             report.already_present += 1;
         }
     }
-    Ok(())
+    Ok(report)
 }
 
 /// Check one Blossom server for a deterministic sample of live-sync blocks.

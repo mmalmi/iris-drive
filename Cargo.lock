@@ -3328,6 +3328,7 @@ dependencies = [
  "dirs 6.0.0",
  "futures",
  "hashtree-blossom",
+ "hashtree-cli",
  "hashtree-config",
  "hashtree-core",
  "hashtree-embedded",

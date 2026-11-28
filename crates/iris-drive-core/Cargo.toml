@@ -69,6 +69,8 @@ heed = { package = "hashtree-heed", version = "=0.20.5-hashtree.2", default-feat
 rustix = { version = "1", features = ["fs"] }
 
 [dev-dependencies]
+# Exercise signed backup retention and ordinary eviction on the shipping server.
+hashtree-cli = { version = "=0.4.9", default-features = false }
 tokio = { workspace = true, features = ["full", "macros", "rt-multi-thread"] }
 
 [lints]
