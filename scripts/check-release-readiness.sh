@@ -238,12 +238,12 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" hashtree-network 0.3.0 e5e282964a08e2ee6851006a91823740672fa5f103d5de652532ee03186381c5
   require_registry_package "$lock" hashtree-nostr 0.4.0 381059616e65a3154eeac615a811ef18d854400958f78dfb8e11024f65800501
   require_registry_package "$lock" hashtree-nostr-pubsub 0.4.0 114ab31557c3e5466969fcfa9d7f0a294fbd7069bc501274f47860ff763b6b5b
-  require_registry_package "$lock" nostr-pubsub 0.1.22 30d7f47d8b4a1785dcb667abaf69a02b39b9978a6c72a2af444ad60560e48fe2
+  require_registry_package "$lock" nostr-pubsub 0.1.24 aaf0527b041e92a7c1c5a404e07457cd917e85644dae2f1ca43b9f5c2ea498f5
   require_registry_package "$lock" nostr-pubsub-fips 0.6.6 65a202b9198f979184b476ecb1b5614be02ac059e91901212ff3df7e4d9f19af
   require_registry_package "$lock" nostr-pubsub-reconcile 0.1.4 63865303e25e95741c1ccaf51873124bfb2ebe74660a8d4c9c7df15b02d2f18a
-  require_registry_package "$lock" nostr-pubsub-social-graph 0.3.1 6f7f5d8b5ae252baf6bba6f1fafcd4d0df80a2a9b31eaccc3786016e35f25abd
+  require_registry_package "$lock" nostr-pubsub-social-graph 0.3.2 d5f30fb3320c0c24c66763a2aafa06b79f300611003e733f5268fbe5c5c00539
   require_registry_package "$lock" hashtree-nostr-social-graph-heed 0.2.1-hashtree.1 f48e56163b5a87fadafb206194e37edd5c75c1a66f138225c9a36e6a6b2780e0
-  require_registry_package "$lock" nostr-social-graph 0.2.2 94ad34129aa71f3cb8344e39d3a690c08c7d84b5a230a42e146efc0aaa3f2d22
+  require_registry_package "$lock" nostr-social-graph 0.2.4 89114d095777d8a8f74f420162b79637a12c1518135fde5fa04f1ec95c014272
   require_registry_package "$lock" nostr-social-memory 0.2.1 4b28fbf489df058c877fba6d660d041883683d40272b5dbb8cf56679f1c105a1
   require_registry_package "$lock" nostr-pubsub-relay 0.1.15 fe53648d219d8fc5e3f8c2606d3dced398c383521127aeeaa9f3b345d2d3a9a9
 done
