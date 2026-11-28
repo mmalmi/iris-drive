@@ -178,7 +178,9 @@ async fn a_listing_that_cannot_download_keeps_the_missing_chunk_and_says_why() {
     let message = format!("{unreachable:#}");
     assert!(names_missing_chunk(&message), "{message}");
     assert!(
-        !message.contains("404") && message.contains(&url),
+        message.contains("error sending request for url")
+            && message.contains(&url)
+            && !message.contains("404 Not Found"),
         "an unreachable service must not read as an explicit miss: {message}"
     );
 }
